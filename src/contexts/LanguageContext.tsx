@@ -4,6 +4,7 @@ export type AppLanguage = 'sq' | 'en' | 'sr';
 
 const LANGUAGE_STORAGE_KEY = 'bmedical_language';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const translations: any = {
   sq: {
     languageNames: { sq: 'Shqip', en: 'English', sr: 'Srpski' },
@@ -15,8 +16,8 @@ const translations: any = {
       customers: 'Klientet',
       contact: 'Kontakti',
       login: 'Hyrje',
-      clinicLogin: 'Hyrja e Klinikes',
-      ordinanceLogin: 'Hyrja e Ordinances',
+      clinicLogin: 'Hyrja e Klinikes / Ordinances',
+      ordinanceLogin: 'Hyrja e Klinikes / Ordinances',
       hospitalLogin: 'Hyrja e Spitalit',
       startTrial: 'Fillo proven falas',
       signUp: 'Regjistrohu',
@@ -42,7 +43,7 @@ const translations: any = {
       badge: 'Ne perputhje me GDPR · Siguri e nivelit spitalor',
       titleStart: 'Sistemi i plote i menaxhimit per',
       titleAccent: 'klinika moderne fizioterapie',
-      description: 'I besuar nga klinika, ordinanca, qendra rehabilitimi dhe spitale ne Europe. Menaxho pacientet, terminet, trajtimet, faturimin dhe raportet nga nje platforme e vetme e sigurt.',
+      description: 'I besuar nga klinika, praktika private, qendra rehabilitimi dhe spitale ne Europe. Menaxho pacientet, terminet, trajtimet, faturimin dhe raportet nga nje platforme e vetme e sigurt.',
       startTrial: 'Fillo proven falas',
       requestDemo: 'Kerko demo',
       clinics: 'Klinika te perfshira',
@@ -82,7 +83,7 @@ const translations: any = {
     modules: {
       eyebrow: 'Pse kjo platforme',
       title: 'E ndertuar per rehabilitim, jo si nje sistem gjenerik',
-      description: 'Shumica e software-ve mjekesore e trajtojne fizioterapine si shtese. Ketu cdo ekran, formular dhe proces eshte menduar specifikisht per pune reale ne klinika dhe ordinanca.',
+      description: 'Shumica e software-ve mjekesore e trajtojne fizioterapine si shtese. Ketu cdo ekran, formular dhe proces eshte menduar specifikisht per pune reale ne klinika, praktika private dhe spitale.',
       reasons: [
         ['Izolim multi-tenant', 'Te dhenat e tua nuk prekin kurre nje klinike tjeter. Izolimi zbatohet ne nivel PostgreSQL me RLS.'],
         ['Leje sipas roleve', '6 role te integruara: Pronari, Fizioterapisti, Mjeku, Recepsionisti, Financieri, Asistenti.'],
@@ -123,12 +124,12 @@ const translations: any = {
     },
     pricing: {
       eyebrow: 'Cmim i thjeshte dhe transparent',
-      title: 'Zgjidh planin qe i pershtatet klinikes tende',
+      title: 'Zgjidh planin qe i pershtatet klinikes ose spitalit tend',
       description: 'Fillo me prove falas 14-ditore. Pa karte krediti. Ndal kur te duash.',
       startTrial: 'Fillo proven falas',
       contactSales: 'Kontakto shitjet',
       mostPopular: 'ME I KERKUARI',
-      professionalDesc: 'Per klinika me nje lokacion dhe fizioterapiste private',
+      professionalDesc: 'Per klinika, ordinanca dhe praktika private me nje lokacion',
       enterpriseDesc: 'Per spitale, qendra rehabilitimi dhe klinika me shume lokacione',
       yearly: 'vjetore',
       custom: 'Sipas kerkeses',
@@ -179,7 +180,7 @@ const translations: any = {
       eyebrow: 'Pyetje te shpeshta',
       title: 'Pyetjet me te zakonshme',
       items: [
-        ['A jane te izoluara te dhenat e klinikes time?', 'Po. Cdo klinike, spital dhe ordinance ka hapesiren e vet te izoluar. Izolimi zbatohet ne nivel PostgreSQL me tenant_id dhe politika RLS.'],
+        ['A jane te izoluara te dhenat e klinikes time?', 'Po. Cdo klinike ose spital ka hapesiren e vet te izoluar. Izolimi zbatohet ne nivel PostgreSQL me tenant_id dhe politika RLS.'],
         ['A mund t i importoj pacientet dhe terminet ekzistuese?', 'Po. Planet Enterprise perfshijne ndihme per migrim, ndersa klientet Professional mund te importojne me CSV.'],
         ['Cfare ndodh pas perfundimit te proves falas?', 'Te dhenat ruhen. Mund te zgjedhesh nje plan, te vazhdosh ose t i eksportosh ne format CSV/PDF.'],
         ['A mbeshtet printere termike?', 'Po. Mbeshtejtim printim termik 80mm si dhe fatura, oferta dhe raporte profesionale A4.'],
@@ -215,7 +216,7 @@ const translations: any = {
       signIn: 'Hyr',
       signingIn: 'Duke hyre...',
       clinic: 'Hyrja e Klinikes',
-      ordinance: 'Hyrja e Ordinances',
+      ordinance: 'Hyrja e Klinikes / Ordinances',
       hospital: 'Hyrja e Spitalit',
       default: 'Hyrje',
       successTitle: 'Mire se erdhe',
@@ -242,7 +243,7 @@ const translations: any = {
       country: 'Shteti *',
       tax: 'TVSH / NIPT *',
       plan: 'Plani i abonimit *',
-      professionalMeta: '€50 / muaj · prove 14-ditore',
+      professionalMeta: 'EUR 50 / muaj · prove 14-ditore',
       enterpriseMeta: 'Vjetore · kontakto shitjet',
       agreeStart: 'Pajtohem me ',
       terms: 'Kushtet e Sherbimit',
@@ -312,7 +313,9 @@ const translations: any = {
       },
     },
   },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   en: {} as any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sr: {} as any,
 };
 
@@ -326,8 +329,8 @@ translations.en = {
     customers: 'Customers',
     contact: 'Contact',
     login: 'Login',
-    clinicLogin: 'Clinic Login',
-    ordinanceLogin: 'Ordinance Login',
+    clinicLogin: 'Clinic / Ordinance Login',
+    ordinanceLogin: 'Clinic / Ordinance Login',
     hospitalLogin: 'Hospital Login',
     startTrial: 'Start Free Trial',
     signUp: 'Sign Up',
@@ -353,7 +356,7 @@ translations.en = {
     badge: 'GDPR Compliant · Hospital-Grade Security',
     titleStart: 'The Complete Practice Management System for',
     titleAccent: 'Modern Physiotherapy Clinics',
-    description: 'Trusted by clinics, ordinances, rehabilitation centers and hospitals across Europe. Manage patients, appointments, treatments, billing and reports from a single secure platform.',
+      description: 'Trusted by clinics, private practices, rehabilitation centers and hospitals across Europe. Manage patients, appointments, treatments, billing and reports from a single secure platform.',
     startTrial: 'Start Free Trial',
     requestDemo: 'Request a Demo',
     clinics: 'Clinics onboarded',
@@ -434,12 +437,12 @@ translations.en = {
   },
   pricing: {
     eyebrow: 'Simple, Transparent Pricing',
-    title: 'Choose the plan that fits your practice',
+    title: 'Choose the plan that fits your clinic or hospital',
     description: 'Start with a 14-day free trial. No credit card required. Cancel anytime.',
     startTrial: 'Start Free Trial',
     contactSales: 'Contact Sales',
     mostPopular: 'MOST POPULAR',
-    professionalDesc: 'For single-location clinics and private physiotherapists',
+    professionalDesc: 'For single-location clinics, ordinances and private practices',
     enterpriseDesc: 'For hospitals, rehab centers and multi-location clinics',
     yearly: 'yearly',
     custom: 'Custom',
@@ -464,7 +467,7 @@ translations.en = {
     eyebrow: 'FAQ',
     title: 'Frequently asked questions',
     items: [
-      ['Is my clinic data isolated from other tenants?', 'Yes. Every clinic, hospital and ordinance gets an isolated workspace. Data isolation is enforced at the PostgreSQL level with tenant_id and row-level security policies.'],
+      ['Is my clinic data isolated from other tenants?', 'Yes. Every clinic or hospital gets an isolated workspace. Data isolation is enforced at the PostgreSQL level with tenant_id and row-level security policies.'],
       ['Can I import my existing patients and appointments?', 'Yes. Enterprise plans include migration support, while Professional customers can import through CSV.'],
       ['What happens after my free trial ends?', 'Your data remains preserved. You can choose a plan and continue or export your data in CSV/PDF format at any time.'],
       ['Do you support thermal printers?', 'Yes. We support 80mm thermal receipt printing as well as A4 invoices, offers and reports.'],
@@ -500,7 +503,7 @@ translations.en = {
     signIn: 'Sign in',
     signingIn: 'Signing in...',
     clinic: 'Clinic Login',
-    ordinance: 'Ordinance Login',
+    ordinance: 'Clinic / Ordinance Login',
     hospital: 'Hospital Login',
     default: 'Sign in',
     successTitle: 'Welcome back',
@@ -510,7 +513,7 @@ translations.en = {
   register: {
     back: 'Back to home',
     title: 'Start your 14-day free trial',
-    description: 'Create your clinic workspace in under 2 minutes. No credit card required.',
+    description: 'Create your clinic or hospital workspace in under 2 minutes. No credit card required.',
     bullets: ['Isolated tenant workspace', 'Full patient & appointment management', 'Waiting room + billing + reports', 'Cancel anytime, no lock-in'],
     business: 'Business / Clinic / Hospital name *',
     owner: 'Owner / Doctor / Physiotherapist full name *',
@@ -522,7 +525,7 @@ translations.en = {
     country: 'Country *',
     tax: 'VAT / Tax number *',
     plan: 'Subscription plan *',
-    professionalMeta: '€50 / month · 14-day trial',
+    professionalMeta: 'EUR 50 / month · 14-day trial',
     enterpriseMeta: 'Yearly · contact sales',
     agreeStart: 'I agree to the ',
     terms: 'Terms of Service',
@@ -603,8 +606,8 @@ translations.sr = {
     customers: 'Klijenti',
     contact: 'Kontakt',
     login: 'Prijava',
-    clinicLogin: 'Prijava klinike',
-    ordinanceLogin: 'Prijava ordinacije',
+    clinicLogin: 'Prijava klinike / ordinacije',
+    ordinanceLogin: 'Prijava klinike / ordinacije',
     hospitalLogin: 'Prijava bolnice',
     startTrial: 'Pokreni besplatnu probu',
     signUp: 'Registracija',
@@ -726,7 +729,7 @@ translations.sr = {
     signIn: 'Prijavi se',
     signingIn: 'Prijavljivanje...',
     clinic: 'Prijava klinike',
-    ordinance: 'Prijava ordinacije',
+    ordinance: 'Prijava klinike / ordinacije',
     hospital: 'Prijava bolnice',
     default: 'Prijava',
     successTitle: 'Dobrodosli nazad',
@@ -794,12 +797,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (stored === 'sq' || stored === 'en' || stored === 'sr') {
         setLanguage(stored);
       }
-    } catch {}
+    } catch {
+      // Ignore localStorage failures; default language stays active.
+    }
   }, []);
 
   const updateLanguage = (next: AppLanguage) => {
     setLanguage(next);
-    try { localStorage.setItem(LANGUAGE_STORAGE_KEY, next); } catch {}
+    try { localStorage.setItem(LANGUAGE_STORAGE_KEY, next); } catch {
+      // Ignore localStorage failures; in-memory language still updates.
+    }
   };
 
   return (

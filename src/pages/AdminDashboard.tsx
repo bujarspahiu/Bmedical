@@ -1,183 +1,287 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Building2, DollarSign, AlertCircle, Search, LogOut, TrendingUp, Activity, Bell, Settings as SettingsIcon, FileText } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Activity, Bell, Building2, DollarSign, LogOut, Search, Settings as SettingsIcon, TrendingUp } from 'lucide-react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAuth } from '@/contexts/AuthContext';
-import { demoTenants } from '@/data/demoData';
+import { api } from '@/lib/api';
 import Brand from '@/components/Brand';
+import { toast } from '@/components/ui/use-toast';
+import { demoTenants } from '@/data/demoData';
+
+type AdminTenant = {
+  id: string;
+  name: string;
+  city: string;
+  country: string;
+  plan: string;
+  status: string;
+  staffCount: number;
+  patientsCount: number;
+  mrr: number;
+  yearlyFee: number;
+  joinedAt: string;
+};
+
+type AdminOverview = {
+  tenants: AdminTenant[];
+  metrics: {
+    registeredClinics: number;
+    activeSubscriptions: number;
+    suspendedCount: number;
+    monthlyMrr: number;
+    yearlyRevenue: number;
+  };
+};
 
 const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [q, setQ] = useState('');
-  const [tenants, setTenants] = useState(demoTenants);
+  const isDemoAdminEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_ADMIN === 'true';
+  const isDemoAdmin = isDemoAdminEnabled && user?.id === 'demo-platform-admin';
+  const [demoRows, setDemoRows] = useState<AdminTenant[]>(demoTenants.map((tenant) => ({ ...tenant })));
+
+  const overviewQuery = useQuery({
+    queryKey: ['admin-overview'],
+    queryFn: async () => api<AdminOverview>('admin_tenants_overview'),
+    enabled: !!user?.isAdmin && !isDemoAdmin,
+  });
+
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ tenantId, status }: { tenantId: string; status: 'active' | 'suspended' }) =>
+      api('admin_tenant_update_status', { tenantId, status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-overview'] });
+    },
+    onError: (error: Error) => toast({ title: 'Could not update tenant', description: error.message }),
+  });
 
   if (!user?.isAdmin) {
-    navigate('/Adminstaff');
-    return null;
+    return <Navigate to="/Adminstaff" replace />;
   }
 
-  const filtered = tenants.filter((t) => t.name.toLowerCase().includes(q.toLowerCase()) || t.city.toLowerCase().includes(q.toLowerCase()));
-  const activeCount = tenants.filter((t) => t.status === 'active').length;
-  const suspendedCount = tenants.filter((t) => t.status === 'suspended').length;
-  const mrr = tenants.filter((t) => t.plan === 'professional' && t.status === 'active').length * 50;
-  const yearlyRev = tenants.filter((t) => t.plan === 'enterprise' && t.status === 'active').reduce((s, t) => s + t.yearlyFee, 0);
-
-  const toggleSuspend = (id: string) => {
-    setTenants((prev) => prev.map((t) => t.id === id ? { ...t, status: t.status === 'active' ? 'suspended' : 'active' } : t));
+  const demoMetrics = {
+    registeredClinics: demoRows.length,
+    activeSubscriptions: demoRows.filter((tenant) => tenant.status === 'active').length,
+    suspendedCount: demoRows.filter((tenant) => tenant.status === 'suspended').length,
+    monthlyMrr: demoRows.reduce((sum, tenant) => sum + tenant.mrr, 0),
+    yearlyRevenue: demoRows.reduce((sum, tenant) => sum + tenant.yearlyFee, 0),
   };
 
-  const upgrade = (id: string) => {
-    setTenants((prev) => prev.map((t) => t.id === id ? { ...t, plan: 'enterprise' as const, mrr: 0, yearlyFee: 4800 } : t));
+  const tenants = isDemoAdmin ? demoRows : overviewQuery.data?.tenants ?? [];
+  const metrics = isDemoAdmin ? demoMetrics : overviewQuery.data?.metrics;
+  const filtered = tenants.filter((tenant) =>
+    [tenant.name, tenant.city, tenant.country].join(' ').toLowerCase().includes(q.trim().toLowerCase()),
+  );
+
+  const toggleStatus = async (tenant: AdminTenant) => {
+    const nextStatus = tenant.status === 'active' ? 'suspended' : 'active';
+
+    if (isDemoAdmin) {
+      setDemoRows((current) =>
+        current.map((row) =>
+          row.id === tenant.id
+            ? {
+                ...row,
+                status: nextStatus,
+                mrr: row.plan === 'professional' ? (nextStatus === 'active' ? 50 : 0) : 0,
+                yearlyFee: row.plan === 'enterprise' ? (nextStatus === 'active' ? row.yearlyFee || 4800 : 0) : 0,
+              }
+            : row,
+        ),
+      );
+    } else {
+      await updateStatusMutation.mutateAsync({ tenantId: tenant.id, status: nextStatus });
+    }
+
+    toast({ title: 'Tenant updated', description: `${tenant.name} is now ${nextStatus}.` });
   };
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="bg-slate-900 text-white border-b border-slate-800">
-        <div className="max-w-[1400px] mx-auto px-6 py-3 flex items-center justify-between">
+      <header className="border-b border-slate-800 bg-slate-900 text-white">
+        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-3">
           <Brand theme="dark" compact showTagline={false} />
           <div className="flex items-center gap-3">
-            <Bell className="w-5 h-5 text-slate-400" />
-            <SettingsIcon className="w-5 h-5 text-slate-400" />
+            <Bell className="h-5 w-5 text-slate-400" />
+            <SettingsIcon className="h-5 w-5 text-slate-400" />
             <div className="text-sm text-slate-300">{user.email}</div>
-            <Button size="sm" variant="ghost" onClick={() => { logout(); navigate('/'); }} className="text-slate-300 hover:text-white hover:bg-slate-800">
-              <LogOut className="w-4 h-4 mr-1" /> Sign out
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                void logout();
+                navigate('/');
+              }}
+              className="text-slate-300 hover:bg-slate-800 hover:text-white"
+            >
+              <LogOut className="mr-1 h-4 w-4" />
+              Sign out
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-[1400px] mx-auto p-6">
-        <div className="mb-6">
+      <main className="mx-auto max-w-[1400px] space-y-6 p-6">
+        <div>
           <h1 className="text-2xl font-bold text-[#1F2937]">Platform overview</h1>
           <p className="text-sm text-slate-600">Manage tenants, subscriptions and revenue across all clinics.</p>
+          {isDemoAdmin && (
+            <p className="mt-2 text-xs text-amber-700">
+              Demo admin mode is active. Tenant actions are local only until PostgreSQL is connected.
+            </p>
+          )}
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <MetricCard icon={<Building2 className="w-5 h-5" />} label="Registered clinics" value={tenants.length.toString()} sub={`${activeCount} active`} color="text-[#2C5F7C]" bg="bg-[#2C5F7C]/10" />
-          <MetricCard icon={<Activity className="w-5 h-5" />} label="Active subscriptions" value={activeCount.toString()} sub={`${suspendedCount} suspended`} color="text-emerald-600" bg="bg-emerald-50" />
-          <MetricCard icon={<DollarSign className="w-5 h-5" />} label="Monthly MRR" value={`€${mrr.toLocaleString()}`} sub="Professional plans" color="text-amber-600" bg="bg-amber-50" />
-          <MetricCard icon={<TrendingUp className="w-5 h-5" />} label="Yearly revenue" value={`€${yearlyRev.toLocaleString()}`} sub="Enterprise contracts" color="text-indigo-600" bg="bg-indigo-50" />
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <MiniCard label="Expiring soon" value="3" tone="amber" />
-          <MiniCard label="Unpaid tenants" value="1" tone="red" />
-          <MiniCard label="New leads (7d)" value="14" tone="blue" />
-          <MiniCard label="Demo requests" value="6" tone="emerald" />
-        </div>
-
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-          <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="font-semibold text-[#1F2937]">Tenant management</div>
-              <div className="text-xs text-slate-500">Full control over all registered clinics, hospitals and ordinances</div>
+        {!metrics ? (
+          <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-500">
+            Loading admin overview...
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <MetricCard
+                icon={<Building2 className="h-5 w-5" />}
+                label="Registered clinics"
+                value={metrics.registeredClinics.toString()}
+                sub={`${metrics.activeSubscriptions} active`}
+                color="text-[#2C5F7C]"
+                bg="bg-[#2C5F7C]/10"
+              />
+              <MetricCard
+                icon={<Activity className="h-5 w-5" />}
+                label="Active subscriptions"
+                value={metrics.activeSubscriptions.toString()}
+                sub={`${metrics.suspendedCount} suspended`}
+                color="text-emerald-600"
+                bg="bg-emerald-50"
+              />
+              <MetricCard
+                icon={<DollarSign className="h-5 w-5" />}
+                label="Monthly MRR"
+                value={`EUR ${metrics.monthlyMrr.toLocaleString()}`}
+                sub="Professional plans"
+                color="text-amber-600"
+                bg="bg-amber-50"
+              />
+              <MetricCard
+                icon={<TrendingUp className="h-5 w-5" />}
+                label="Yearly revenue"
+                value={`EUR ${metrics.yearlyRevenue.toLocaleString()}`}
+                sub="Enterprise contracts"
+                color="text-indigo-600"
+                bg="bg-indigo-50"
+              />
             </div>
-            <div className="flex gap-2">
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                <Input placeholder="Search tenants..." value={q} onChange={(e) => setQ(e.target.value)} className="pl-9 w-64" />
+
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
+                <div>
+                  <div className="font-semibold text-[#1F2937]">Tenant management</div>
+                  <div className="text-xs text-slate-500">
+                    {isDemoAdmin ? 'Local demo tenant list' : 'Live tenant list from PostgreSQL'}
+                  </div>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                  <Input
+                    placeholder="Search tenants..."
+                    value={q}
+                    onChange={(event) => setQ(event.target.value)}
+                    className="w-64 pl-9"
+                  />
+                </div>
               </div>
-              <Button className="bg-[#2C5F7C] hover:bg-[#234e66]">
-                <FileText className="w-4 h-4 mr-1" /> Export
-              </Button>
-            </div>
-          </div>
 
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tenant</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Plan</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Staff</TableHead>
-                  <TableHead>Patients</TableHead>
-                  <TableHead>Revenue</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="font-medium">{t.name}</TableCell>
-                    <TableCell className="text-slate-600">{t.city}, {t.country}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={t.plan === 'enterprise' ? 'border-indigo-300 text-indigo-700 bg-indigo-50' : 'border-slate-300'}>
-                        {t.plan}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={t.status === 'active' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' : 'bg-red-100 text-red-700 hover:bg-red-100'}>
-                        {t.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{t.staffCount}</TableCell>
-                    <TableCell>{t.patientsCount.toLocaleString()}</TableCell>
-                    <TableCell>{t.plan === 'professional' ? `€${t.mrr}/mo` : `€${t.yearlyFee}/yr`}</TableCell>
-                    <TableCell className="text-slate-600 text-xs">{t.joinedAt}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        {t.plan === 'professional' && (
-                          <Button size="sm" variant="outline" onClick={() => upgrade(t.id)} className="h-7 text-xs">Upgrade</Button>
-                        )}
-                        <Button size="sm" variant="outline" onClick={() => toggleSuspend(t.id)} className="h-7 text-xs">
-                          {t.status === 'active' ? 'Suspend' : 'Activate'}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-
-        <div className="grid lg:grid-cols-2 gap-4 mt-6">
-          <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <div className="font-semibold text-[#1F2937] mb-3 flex items-center gap-2"><Bell className="w-4 h-4" /> Announcement center</div>
-            <Input placeholder="Broadcast message to all tenants..." className="mb-3" />
-            <Button className="bg-[#2C5F7C] hover:bg-[#234e66]">Send to all clinics</Button>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <div className="font-semibold text-[#1F2937] mb-3 flex items-center gap-2"><AlertCircle className="w-4 h-4" /> Plan limits configuration</div>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between p-2 bg-slate-50 rounded"><span>Professional · Staff limit</span><span className="font-semibold">3</span></div>
-              <div className="flex justify-between p-2 bg-slate-50 rounded"><span>Professional · Invoices/month</span><span className="font-semibold">30</span></div>
-              <div className="flex justify-between p-2 bg-slate-50 rounded"><span>Professional · Price</span><span className="font-semibold">€50/mo</span></div>
-              <div className="flex justify-between p-2 bg-slate-50 rounded"><span>Enterprise · Limits</span><span className="font-semibold">Unlimited</span></div>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Tenant</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead>Plan</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Staff</TableHead>
+                      <TableHead>Patients</TableHead>
+                      <TableHead>Revenue</TableHead>
+                      <TableHead>Joined</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={9} className="py-10 text-center text-slate-500">
+                          No tenants found.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {filtered.map((tenant) => (
+                      <TableRow key={tenant.id}>
+                        <TableCell className="font-medium">{tenant.name}</TableCell>
+                        <TableCell className="text-slate-600">{tenant.city}, {tenant.country}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={tenant.plan === 'enterprise' ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-300'}
+                          >
+                            {tenant.plan}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={tenant.status === 'active' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' : 'bg-red-100 text-red-700 hover:bg-red-100'}>
+                            {tenant.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{tenant.staffCount}</TableCell>
+                        <TableCell>{tenant.patientsCount.toLocaleString()}</TableCell>
+                        <TableCell>{tenant.plan === 'professional' ? `EUR ${tenant.mrr}/mo` : `EUR ${tenant.yearlyFee}/yr`}</TableCell>
+                        <TableCell className="text-xs text-slate-600">{tenant.joinedAt}</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void toggleStatus(tenant)}
+                            className="h-7 text-xs"
+                            disabled={updateStatusMutation.isPending}
+                          >
+                            {tenant.status === 'active' ? 'Suspend' : 'Activate'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </main>
     </div>
   );
 };
 
-const MetricCard: React.FC<{ icon: React.ReactNode; label: string; value: string; sub: string; color: string; bg: string }> = ({ icon, label, value, sub, color, bg }) => (
-  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-    <div className="flex items-center justify-between mb-3">
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${bg} ${color}`}>{icon}</div>
+const MetricCard: React.FC<{ icon: React.ReactNode; label: string; value: string; sub: string; color: string; bg: string }> = ({
+  icon,
+  label,
+  value,
+  sub,
+  color,
+  bg,
+}) => (
+  <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="mb-3 flex items-center justify-between">
+      <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${bg} ${color}`}>{icon}</div>
     </div>
-    <div className="text-xs text-slate-500 mb-1">{label}</div>
+    <div className="mb-1 text-xs text-slate-500">{label}</div>
     <div className="text-2xl font-bold text-[#1F2937]">{value}</div>
-    <div className="text-xs text-slate-500 mt-1">{sub}</div>
+    <div className="mt-1 text-xs text-slate-500">{sub}</div>
   </div>
 );
-
-const MiniCard: React.FC<{ label: string; value: string; tone: 'amber' | 'red' | 'blue' | 'emerald' }> = ({ label, value, tone }) => {
-  const map = { amber: 'bg-amber-50 text-amber-700 border-amber-200', red: 'bg-red-50 text-red-700 border-red-200', blue: 'bg-blue-50 text-blue-700 border-blue-200', emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-  return (
-    <div className={`rounded-lg p-4 border ${map[tone]}`}>
-      <div className="text-xs font-medium opacity-80">{label}</div>
-      <div className="text-2xl font-bold mt-1">{value}</div>
-    </div>
-  );
-};
 
 export default AdminDashboard;

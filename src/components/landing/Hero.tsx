@@ -31,6 +31,14 @@ const Hero: React.FC = () => {
                 <Play className="w-4 h-4 mr-2" /> {t.hero.requestDemo}
               </Button>
             </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => navigate('/login?type=clinic')} className="border-slate-300 bg-white/80">
+                {t.nav.clinicLogin}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate('/login?type=hospital')} className="border-slate-300 bg-white/80">
+                {t.nav.hospitalLogin}
+              </Button>
+            </div>
             <div className="mt-10 grid grid-cols-3 gap-6 max-w-md">
               <div>
                 <div className="text-2xl font-bold text-[#2C5F7C]">2,400+</div>

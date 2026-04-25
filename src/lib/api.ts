@@ -11,10 +11,15 @@ export function getStoredToken(): string {
 }
 
 export function storeToken(t: string) {
-  try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch {}
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Ignore storage failures; cookie auth may still work.
+  }
 }
 
-export async function api<T = any>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
+export async function api<T = unknown>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
   const token = getStoredToken();
   const res = await fetch(ENDPOINT, {
     method: 'POST',

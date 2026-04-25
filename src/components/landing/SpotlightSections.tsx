@@ -1,8 +1,8 @@
 import React from 'react';
-import { Activity, CreditCard, Mail, BarChart3 } from 'lucide-react';
+import { Activity, CreditCard, Mail, BarChart3, type LucideIcon } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
-const icons = [BarChart3, CreditCard, Mail];
+const icons: LucideIcon[] = [BarChart3, CreditCard, Mail];
 
 const SpotlightSections: React.FC = () => {
   const { t } = useLanguage();
@@ -68,7 +68,7 @@ const SpotlightSections: React.FC = () => {
   );
 };
 
-const SpotCard: React.FC<{ icon: any; title: string; bullets: string[] }> = ({ icon: Icon, title, bullets }) => (
+const SpotCard: React.FC<{ icon: LucideIcon; title: string; bullets: string[] }> = ({ icon: Icon, title, bullets }) => (
   <div className="bg-white rounded-xl p-7 shadow-sm border border-slate-200 hover:shadow-lg transition">
     <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-[#2C5F7C] to-[#4A90A4] text-white flex items-center justify-center mb-5">
       <Icon className="w-6 h-6" />

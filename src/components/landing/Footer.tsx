@@ -29,7 +29,6 @@ const Footer: React.FC = () => {
             <div className="font-semibold text-white mb-4 text-sm">{t.footer.login}</div>
             <ul className="space-y-2 text-sm">
               <li><Link to="/login?type=clinic" className="hover:text-white">{t.nav.clinicLogin}</Link></li>
-              <li><Link to="/login?type=ordinance" className="hover:text-white">{t.nav.ordinanceLogin}</Link></li>
               <li><Link to="/login?type=hospital" className="hover:text-white">{t.nav.hospitalLogin}</Link></li>
             </ul>
           </div>

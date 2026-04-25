@@ -38,7 +38,6 @@ const Navbar: React.FC = () => {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuItem onClick={() => navigate('/login?type=clinic')}>{t.nav.clinicLogin}</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => navigate('/login?type=ordinance')}>{t.nav.ordinanceLogin}</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate('/login?type=hospital')}>{t.nav.hospitalLogin}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -61,9 +60,12 @@ const Navbar: React.FC = () => {
             <a href="#modules" onClick={() => setOpen(false)} className="block px-2 py-2 text-sm font-medium">{t.nav.modules}</a>
             <a href="#pricing" onClick={() => setOpen(false)} className="block px-2 py-2 text-sm font-medium">{t.nav.pricing}</a>
             <a href="#contact" onClick={() => setOpen(false)} className="block px-2 py-2 text-sm font-medium">{t.nav.contact}</a>
-            <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
-              <Button variant="outline" size="sm" onClick={() => navigate('/login')}>{t.nav.login}</Button>
-              <Button size="sm" onClick={() => navigate('/register')} className="bg-[#2C5F7C] text-white">{t.nav.signUp}</Button>
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <div className="grid grid-cols-1 gap-2">
+                <Button variant="outline" size="sm" onClick={() => navigate('/login?type=clinic')}>{t.nav.clinicLogin}</Button>
+                <Button variant="outline" size="sm" onClick={() => navigate('/login?type=hospital')}>{t.nav.hospitalLogin}</Button>
+              </div>
+              <Button size="sm" onClick={() => navigate('/register')} className="w-full bg-[#2C5F7C] text-white">{t.nav.signUp}</Button>
             </div>
           </div>
         )}

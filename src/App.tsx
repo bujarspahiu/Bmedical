@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -6,23 +7,53 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { LanguageProvider } from "@/contexts/LanguageContext";
-import Landing from "./pages/Landing";
-import Register from "./pages/Register";
-import Login from "./pages/Login";
-import AdminLogin from "./pages/AdminLogin";
-import AdminDashboard from "./pages/AdminDashboard";
-import Legal from "./pages/Legal";
 import ClinicLayout from "./components/clinic/ClinicLayout";
-import Dashboard from "./pages/clinic/Dashboard";
-import Patients from "./pages/clinic/Patients";
-import WaitingRoom from "./pages/clinic/WaitingRoom";
-import Appointments from "./pages/clinic/Appointments";
-import Invoices from "./pages/clinic/Invoices";
-import Reports from "./pages/clinic/Reports";
-import { Anamnesis, Diagnoses, TreatmentPlans, Sessions, Offers, Staff, Settings } from "./pages/clinic/Simple";
-import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const Landing = lazy(() => import("./pages/Landing"));
+const Register = lazy(() => import("./pages/Register"));
+const Login = lazy(() => import("./pages/Login"));
+const AdminLogin = lazy(() => import("./pages/AdminLogin"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const Legal = lazy(() => import("./pages/Legal"));
+const Dashboard = lazy(() => import("./pages/clinic/Dashboard"));
+const Patients = lazy(() => import("./pages/clinic/Patients"));
+const WaitingRoom = lazy(() => import("./pages/clinic/WaitingRoom"));
+const Appointments = lazy(() => import("./pages/clinic/Appointments"));
+const Invoices = lazy(() => import("./pages/clinic/Invoices"));
+const Reports = lazy(() => import("./pages/clinic/Reports"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const Anamnesis = lazy(() => import("./pages/clinic/Simple").then((module) => ({ default: module.Anamnesis })));
+const Diagnoses = lazy(() => import("./pages/clinic/Simple").then((module) => ({ default: module.Diagnoses })));
+const TreatmentPlans = lazy(() => import("./pages/clinic/Simple").then((module) => ({ default: module.TreatmentPlans })));
+const Sessions = lazy(() => import("./pages/clinic/Simple").then((module) => ({ default: module.Sessions })));
+const Offers = lazy(() => import("./pages/clinic/Simple").then((module) => ({ default: module.Offers })));
+const Staff = lazy(() => import("./pages/clinic/Simple").then((module) => ({ default: module.Staff })));
+const Settings = lazy(() => import("./pages/clinic/Simple").then((module) => ({ default: module.Settings })));
+
+const RouteFallback = () => (
+  <div className="min-h-[40vh] flex items-center justify-center text-sm text-slate-500">
+    Loading workspace...
+  </div>
+);
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+      retry(failureCount, error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : "";
+        if (message.includes("unauthorized") || message.includes("forbidden")) return false;
+        return failureCount < 1;
+      },
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
+    },
+    mutations: {
+      retry: 0,
+    },
+  },
+});
 
 const App = () => (
   <ThemeProvider defaultTheme="light">
@@ -33,37 +64,39 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
             <AuthProvider>
-              <Routes>
-              {/* Public */}
-              <Route path="/" element={<Landing />} />
-              <Route path="/register" element={<Register />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/legal/:doc" element={<Legal />} />
-              <Route path="/legal" element={<Navigate to="/legal/terms" replace />} />
+              <Suspense fallback={<RouteFallback />}>
+                <Routes>
+                {/* Public */}
+                <Route path="/" element={<Landing />} />
+                <Route path="/register" element={<Register />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/legal/:doc" element={<Legal />} />
+                <Route path="/legal" element={<Navigate to="/legal/terms" replace />} />
 
-              {/* Super Admin */}
-              <Route path="/Adminstaff" element={<AdminLogin />} />
-              <Route path="/admin" element={<AdminDashboard />} />
+                {/* Super Admin */}
+                <Route path="/Adminstaff" element={<AdminLogin />} />
+                <Route path="/admin" element={<AdminDashboard />} />
 
-              {/* Clinic */}
-              <Route element={<ClinicLayout />}>
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/patients" element={<Patients />} />
-                <Route path="/waiting-room" element={<WaitingRoom />} />
-                <Route path="/appointments" element={<Appointments />} />
-                <Route path="/anamnesis" element={<Anamnesis />} />
-                <Route path="/diagnoses" element={<Diagnoses />} />
-                <Route path="/treatment-plans" element={<TreatmentPlans />} />
-                <Route path="/sessions" element={<Sessions />} />
-                <Route path="/offers" element={<Offers />} />
-                <Route path="/invoices" element={<Invoices />} />
-                <Route path="/reports" element={<Reports />} />
-                <Route path="/staff" element={<Staff />} />
-                <Route path="/settings" element={<Settings />} />
-              </Route>
+                {/* Clinic */}
+                <Route element={<ClinicLayout />}>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/patients" element={<Patients />} />
+                  <Route path="/waiting-room" element={<WaitingRoom />} />
+                  <Route path="/appointments" element={<Appointments />} />
+                  <Route path="/anamnesis" element={<Anamnesis />} />
+                  <Route path="/diagnoses" element={<Diagnoses />} />
+                  <Route path="/treatment-plans" element={<TreatmentPlans />} />
+                  <Route path="/sessions" element={<Sessions />} />
+                  <Route path="/offers" element={<Offers />} />
+                  <Route path="/invoices" element={<Invoices />} />
+                  <Route path="/reports" element={<Reports />} />
+                  <Route path="/staff" element={<Staff />} />
+                  <Route path="/settings" element={<Settings />} />
+                </Route>
 
-              <Route path="*" element={<NotFound />} />
-              </Routes>
+                <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
             </AuthProvider>
           </BrowserRouter>
         </TooltipProvider>

@@ -32,6 +32,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const DEMO_USER_KEY = 'bmedical_demo_user';
+const ENABLE_DEMO_ADMIN = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_ADMIN === 'true';
 
 const demoUsers: Record<string, AuthUser> = {
   'clinic@bmedical.com': {
@@ -63,6 +64,19 @@ const demoUsers: Record<string, AuthUser> = {
   },
 };
 
+if (ENABLE_DEMO_ADMIN) {
+  demoUsers['admin@bmedical.com'] = {
+    id: 'demo-platform-admin',
+    name: 'Bmedical Super Admin',
+    email: 'admin@bmedical.com',
+    role: 'owner',
+    tenantId: 'platform-admin',
+    tenantName: 'Bmedical Platform',
+    plan: 'enterprise',
+    isAdmin: true,
+  };
+}
+
 function getDemoUser(email: string, password: string, adminOnly = false): AuthUser | null {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedPassword = password.trim().toLowerCase();
@@ -78,7 +92,9 @@ function storeDemoUser(user: AuthUser | null) {
   try {
     if (user) localStorage.setItem(DEMO_USER_KEY, JSON.stringify(user));
     else localStorage.removeItem(DEMO_USER_KEY);
-  } catch {}
+  } catch {
+    // Ignore localStorage failures in restricted browsing modes.
+  }
 }
 
 function loadDemoUser(): AuthUser | null {
@@ -107,10 +123,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const r = await api<{ user: AuthUser | null }>('me');
           setUser(r.user);
         }
-      } catch {}
+      } catch {
+        // Session restore failures should fall back to logged-out state.
+      }
       setLoading(false);
     })();
   }, []);
+
+  const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : 'Unexpected error';
 
   const login = async (email: string, password: string) => {
     const demoUser = getDemoUser(email, password, false);
@@ -124,16 +144,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       storeDemoUser(null);
       setUser(r.user);
       return { success: true };
-    } catch (e: any) { return { success: false, message: e.message }; }
+    } catch (error: unknown) { return { success: false, message: getErrorMessage(error) }; }
   };
 
   const adminLogin = async (email: string, password: string) => {
+    if (ENABLE_DEMO_ADMIN) {
+      const demoUser = getDemoUser(email, password, true);
+      if (demoUser) {
+        storeDemoUser(demoUser);
+        setUser(demoUser);
+        return { success: true };
+      }
+    }
     try {
       const r = await api<{ user: AuthUser }>('admin_login', { email, password });
       storeDemoUser(null);
       setUser(r.user);
       return { success: true };
-    } catch (e: any) { return { success: false, message: e.message }; }
+    } catch (error: unknown) { return { success: false, message: getErrorMessage(error) }; }
   };
 
   const register = async (data: RegisterData) => {
@@ -141,11 +169,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const r = await api<{ user: AuthUser }>('register', data as unknown as Record<string, unknown>);
       setUser(r.user);
       return { success: true };
-    } catch (e: any) { return { success: false, message: e.message }; }
+    } catch (error: unknown) { return { success: false, message: getErrorMessage(error) }; }
   };
 
   const logout = async () => {
-    try { await api('logout'); } catch {}
+    try { await api('logout'); } catch {
+      // Best-effort logout; local auth state is cleared below regardless.
+    }
     clearToken();
     storeDemoUser(null);
     setUser(null);

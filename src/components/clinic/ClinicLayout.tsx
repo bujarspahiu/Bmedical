@@ -1,6 +1,27 @@
 import React, { useState } from 'react';
-import { Link, NavLink, useNavigate, Outlet } from 'react-router-dom';
-import { Activity, LayoutDashboard, Users, CalendarClock, ClipboardList, Stethoscope, ListChecks, Receipt, FileText, BarChart3, UserCog, Settings, LogOut, Bell, Search, Menu, Building2, ChevronRight, Headphones } from 'lucide-react';
+import { Link, NavLink, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import {
+  Activity,
+  BarChart3,
+  Bell,
+  Building2,
+  CalendarClock,
+  ChevronRight,
+  ClipboardList,
+  FileText,
+  Headphones,
+  LayoutDashboard,
+  ListChecks,
+  LogOut,
+  Menu,
+  Receipt,
+  Search,
+  Settings,
+  Sparkles,
+  Stethoscope,
+  UserCog,
+  Users,
+} from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,88 +50,117 @@ const ClinicLayout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   if (!user) {
-    navigate('/login');
-    return null;
+    return <Navigate to="/login" replace />;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
-      <aside className={`${mobileOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-200 flex flex-col transition-transform`}>
-        <div className="p-5 border-b border-slate-100">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(74,144,164,0.10),_transparent_35%),linear-gradient(180deg,#f8fbfc_0%,#f1f5f9_100%)] flex">
+      <aside className={`${mobileOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform lg:static lg:translate-x-0`}>
+        <div className="border-b border-slate-100 p-5">
           <Link to="/dashboard">
             <Brand compact showTagline={false} />
           </Link>
-          <div className="text-[10px] text-slate-500 mt-2">v2.4 · Production</div>
-          <div className="mt-4 p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+          <div className="mt-2 text-[10px] text-slate-500">v2.4 | Production</div>
+
+          <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 p-2.5">
             <div className="flex items-center gap-2 text-xs">
-              <Building2 className="w-3.5 h-3.5 text-[#2C5F7C]" />
-              <div className="font-semibold text-[#1F2937] truncate">{user.tenantName}</div>
+              <Building2 className="h-3.5 w-3.5 text-[#2C5F7C]" />
+              <div className="truncate font-semibold text-[#1F2937]">{user.tenantName}</div>
             </div>
             <div className="mt-1.5 flex items-center justify-between">
-              <Badge variant="outline" className={`text-[10px] h-5 ${user.plan === 'enterprise' ? 'border-indigo-300 text-indigo-700 bg-indigo-50' : 'border-slate-300'}`}>
+              <Badge
+                variant="outline"
+                className={`h-5 text-[10px] ${user.plan === 'enterprise' ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-300'}`}
+              >
                 {user.plan === 'enterprise' ? 'Enterprise' : 'Professional'}
               </Badge>
               {user.plan === 'professional' && (
-                <button onClick={() => navigate('/settings')} className="text-[10px] text-[#2C5F7C] font-semibold">Upgrade →</button>
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="text-[10px] font-semibold text-[#2C5F7C]"
+                >
+                  Upgrade
+                </button>
               )}
             </div>
           </div>
         </div>
-        <nav className="flex-1 px-3 py-4 overflow-y-auto">
-          {nav.map((n) => (
+
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
+          {nav.map((item) => (
             <NavLink
-              key={n.to}
-              to={n.to}
+              key={item.to}
+              to={item.to}
               end
               onClick={() => setMobileOpen(false)}
-              className={({ isActive }) => `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition ${
-                isActive ? 'bg-[#2C5F7C] text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-[#2C5F7C]'
-              }`}
+              className={({ isActive }) =>
+                `mb-0.5 flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  isActive ? 'bg-[#2C5F7C] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-[#2C5F7C]'
+                }`
+              }
             >
-              <n.icon className="w-4 h-4" />
-              <span>{n.label}</span>
+              <item.icon className="h-4 w-4" />
+              <span>{item.label}</span>
             </NavLink>
           ))}
         </nav>
-        <div className="p-4 border-t border-slate-100">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#4A90A4] to-[#2C5F7C] text-white flex items-center justify-center font-semibold text-sm">
-              {user.name.split(' ').map((s) => s[0]).join('').slice(0, 2)}
+
+        <div className="border-t border-slate-100 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#4A90A4] to-[#2C5F7C] text-sm font-semibold text-white">
+              {user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-[#1F2937] truncate">{user.name}</div>
-              <div className="text-[10px] text-slate-500 capitalize">{user.role}</div>
+              <div className="truncate text-sm font-semibold text-[#1F2937]">{user.name}</div>
+              <div className="text-[10px] capitalize text-slate-500">{user.role}</div>
             </div>
           </div>
-          <Button variant="outline" size="sm" className="w-full" onClick={() => { logout(); navigate('/'); }}>
-            <LogOut className="w-3.5 h-3.5 mr-2" /> Sign out
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => {
+              void logout();
+              navigate('/');
+            }}
+          >
+            <LogOut className="mr-2 h-3.5 w-3.5" />
+            Sign out
           </Button>
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-4 lg:px-6">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur lg:px-6">
           <div className="flex items-center gap-3">
-            <button className="lg:hidden" onClick={() => setMobileOpen(!mobileOpen)}>
-              <Menu className="w-5 h-5" />
+            <button className="lg:hidden" onClick={() => setMobileOpen((current) => !current)}>
+              <Menu className="h-5 w-5" />
             </button>
+
             <div className="relative hidden md:block">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-              <Input placeholder="Search patients, invoices, sessions..." className="pl-9 w-80 bg-slate-50 border-slate-200" />
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <Input placeholder="Search patients, invoices, sessions..." className="w-80 border-slate-200 bg-slate-50 pl-9" />
+            </div>
+
+            <div className="hidden xl:flex items-center gap-2 rounded-full border border-[#2C5F7C]/10 bg-[#2C5F7C]/5 px-3 py-1.5 text-xs text-[#2C5F7C]">
+              <Sparkles className="h-3.5 w-3.5" />
+              Fast, clear, clinic-first workspace
             </div>
           </div>
+
           <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-1 text-xs text-slate-500">
-              <ChevronRight className="w-3 h-3" /> Workspace online
+            <div className="hidden items-center gap-1 text-xs text-slate-500 md:flex">
+              <ChevronRight className="h-3 w-3" />
+              Workspace online
             </div>
-            <button className="relative p-2 rounded-lg hover:bg-slate-100">
-              <Bell className="w-5 h-5 text-slate-600" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+            <button className="relative rounded-lg p-2 hover:bg-slate-100">
+              <Bell className="h-5 w-5 text-slate-600" />
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
             </button>
           </div>
         </header>
 
-        <main className="flex-1 p-4 lg:p-6 overflow-x-hidden">
+        <main className="flex-1 overflow-x-hidden p-4 lg:p-6">
           <Outlet />
         </main>
       </div>
