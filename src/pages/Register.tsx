@@ -1,54 +1,143 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronRight, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, MailCheck, ShieldCheck, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { PlanType, useAuth, RegisterData } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/use-toast';
-import { useLanguage } from '@/contexts/LanguageContext';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
 import Brand from '@/components/Brand';
 
 const Register: React.FC = () => {
   const [params] = useSearchParams();
-  const { register } = useAuth();
   const navigate = useNavigate();
-  const { t } = useLanguage();
+  const { register } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [registrationSubmitted, setRegistrationSubmitted] = useState(false);
+  const [verificationUrl, setVerificationUrl] = useState('');
+  const [registeredEmail, setRegisteredEmail] = useState('');
   const [form, setForm] = useState<RegisterData>({
-    businessName: '',
-    ownerName: '',
+    firstName: '',
+    lastName: '',
     email: '',
     phone: '',
+    businessName: '',
     password: '',
-    address: '',
-    city: '',
-    country: 'Kosovo',
-    taxNumber: '',
     plan: (params.get('plan') === 'enterprise' ? 'enterprise' : 'professional') as PlanType,
-    agreed: false,
+    agreedTerms: false,
   });
 
-  const update = <K extends keyof RegisterData>(key: K, value: RegisterData[K]) => setForm({ ...form, [key]: value });
+  const planCards = useMemo(
+    () => [
+      {
+        code: 'professional' as const,
+        name: 'Professional',
+        subtitle: 'Clinic / Ordinance',
+        monthly: 'EUR 20 / month',
+        yearly: 'EUR 200 / year',
+        extra: '+ EUR 20 per extra user / month',
+      },
+      {
+        code: 'enterprise' as const,
+        name: 'Enterprise',
+        subtitle: 'Hospital / Multi-location',
+        monthly: 'EUR 50 / month',
+        yearly: 'EUR 500 / year',
+        extra: '+ EUR 50 per extra user / month',
+      },
+    ],
+    [],
+  );
+
+  const update = <K extends keyof RegisterData>(key: K, value: RegisterData[K]) => setForm((current) => ({ ...current, [key]: value }));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const r = await register(form);
+    const result = await register(form);
     setLoading(false);
-    if (!r.success) return toast({ title: t.register.errorTitle, description: r.message });
-    toast({ title: t.register.successTitle, description: t.register.successBody });
-    navigate('/dashboard');
+    if (!result.success) {
+      return toast({ title: 'Registration failed', description: result.message });
+    }
+
+    setRegistrationSubmitted(true);
+    setVerificationUrl(result.verificationUrl || '');
+    setRegisteredEmail(result.email || form.email);
+    toast({
+      title: 'Almost there',
+      description: 'Your workspace was prepared. Verify the email to continue to checkout.',
+    });
   };
+
+  const canUseLocalShortcut = import.meta.env.DEV && Boolean(verificationUrl);
+
+  if (registrationSubmitted) {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(74,144,164,0.16),_transparent_34%),linear-gradient(180deg,#f8fbfd_0%,#ffffff_46%,#f4f8fb_100%)] px-4 py-10">
+        <div className="mx-auto max-w-3xl overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_30px_100px_-40px_rgba(15,23,42,0.45)]">
+          <div className="border-b border-slate-100 bg-slate-50/70 px-6 py-5">
+            <div className="flex items-center justify-between">
+              <Brand />
+              <LanguageSwitcher />
+            </div>
+          </div>
+
+          <div className="p-8 sm:p-10">
+            <div className="mx-auto max-w-xl text-center">
+              <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                <MailCheck className="h-8 w-8" />
+              </div>
+              <h1 className="text-3xl font-bold text-slate-900">Verify your email to continue</h1>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                We prepared your workspace for <span className="font-medium text-slate-900">{registeredEmail}</span>.
+                {' '}Once the email is verified, the client goes straight to the payment page and stays in the same calm checkout flow.
+              </p>
+
+              {canUseLocalShortcut ? (
+                <div className="mt-8 rounded-3xl border border-slate-200 bg-slate-50 p-6 text-left">
+                  <div className="text-sm font-semibold text-slate-900">Local testing shortcut</div>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Development mode can still open the verification link directly when you are testing locally.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button className="rounded-xl bg-[#2C5F7C] hover:bg-[#234e66]" onClick={() => navigate(`/verify-email?token=${encodeURIComponent(new URL(verificationUrl).searchParams.get('token') || '')}`)}>
+                      Open verification
+                    </Button>
+                    <Button variant="outline" className="rounded-xl" onClick={() => window.open(verificationUrl, '_blank', 'noopener,noreferrer')}>
+                      Open raw link
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-8 rounded-3xl border border-slate-200 bg-slate-50 p-6 text-left">
+                  <div className="text-sm font-semibold text-slate-900">Check your inbox</div>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    A verification email has been sent to this address. Open that link to continue safely to checkout.
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-8 text-sm text-slate-500">
+                Need to start over?{' '}
+                <Link to="/register" className="font-medium text-[#2C5F7C]">
+                  Create a different workspace
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(74,144,164,0.14),_transparent_34%),linear-gradient(180deg,#f8fbfd_0%,#ffffff_48%,#f4f8fb_100%)] px-4 py-8">
       <div className="mx-auto max-w-7xl">
         <div className="mb-6 flex items-center justify-between gap-4">
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-[#2C5F7C]">
-            <ArrowLeft className="h-4 w-4" /> {t.register.back}
+            <ArrowLeft className="h-4 w-4" /> Back to website
           </Link>
           <LanguageSwitcher />
         </div>
@@ -61,38 +150,44 @@ const Register: React.FC = () => {
 
               <div className="mb-5 inline-flex w-fit items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium text-white/90 backdrop-blur">
                 <Sparkles className="h-3.5 w-3.5" />
-                14-day guided setup
+                Calm onboarding for non-technical teams
               </div>
 
               <div className="max-w-md">
-                <h1 className="text-3xl font-bold leading-tight lg:text-5xl">{t.register.title}</h1>
-                <p className="mt-4 text-base leading-7 text-white/82 lg:text-lg">{t.register.description}</p>
+                <h1 className="text-3xl font-bold leading-tight lg:text-5xl">Create your workspace without friction</h1>
+                <p className="mt-4 text-base leading-7 text-white/82 lg:text-lg">
+                  Ask only for the essentials now. Email verification comes next, then the customer stays inside one checkout page with simple payment choices.
+                </p>
               </div>
 
               <div className="mt-8 space-y-3">
-                {t.register.bullets.map((x, i) => (
-                  <div key={i} className="flex items-start gap-3 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
+                {[
+                  'Only the key details needed to create the workspace',
+                  'Verify email first, then continue to payment',
+                  'Checkout stays inside BMedical without confusing redirects',
+                  'Professional and Enterprise plans include 1 user by default',
+                ].map((item) => (
+                  <div key={item} className="flex items-start gap-3 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
-                    <span className="text-sm text-white/92">{x}</span>
+                    <span className="text-sm text-white/92">{item}</span>
                   </div>
                 ))}
               </div>
 
               <div className="mt-8 grid gap-3 md:grid-cols-2">
-                <div className={`rounded-2xl border p-4 ${form.plan === 'professional' ? 'border-white/30 bg-white/16' : 'border-white/12 bg-white/8'}`}>
-                  <div className="text-xs uppercase tracking-wider text-white/70">Professional</div>
-                  <div className="mt-2 text-lg font-semibold">Clinic / Ordinance</div>
-                  <div className="mt-2 text-sm text-white/78">{t.register.professionalMeta}</div>
-                </div>
-                <div className={`rounded-2xl border p-4 ${form.plan === 'enterprise' ? 'border-white/30 bg-white/16' : 'border-white/12 bg-white/8'}`}>
-                  <div className="text-xs uppercase tracking-wider text-white/70">Enterprise</div>
-                  <div className="mt-2 text-lg font-semibold">Hospital / Multi-location</div>
-                  <div className="mt-2 text-sm text-white/78">{t.register.enterpriseMeta}</div>
-                </div>
+                {planCards.map((plan) => (
+                  <div key={plan.code} className={`rounded-2xl border p-4 ${form.plan === plan.code ? 'border-white/30 bg-white/16' : 'border-white/12 bg-white/8'}`}>
+                    <div className="text-xs uppercase tracking-wider text-white/70">{plan.name}</div>
+                    <div className="mt-2 text-lg font-semibold">{plan.subtitle}</div>
+                    <div className="mt-2 text-sm text-white/78">{plan.monthly}</div>
+                    <div className="mt-1 text-sm text-white/78">{plan.yearly}</div>
+                    <div className="mt-1 text-xs text-white/65">Includes 1 user</div>
+                  </div>
+                ))}
               </div>
 
               <div className="mt-auto pt-8 text-sm text-white/78">
-                Setup is intentionally simple so staff can start using the platform quickly, without training-heavy onboarding.
+                Doctors should feel invited by the product, not slowed down by it.
               </div>
             </div>
           </div>
@@ -102,102 +197,66 @@ const Register: React.FC = () => {
               <div className="mb-8">
                 <div className="inline-flex items-center gap-2 rounded-full bg-[#2C5F7C]/8 px-3 py-1 text-sm font-medium text-[#2C5F7C]">
                   <ShieldCheck className="h-4 w-4" />
-                  Secure workspace creation
+                  Minimal registration
                 </div>
-                <h2 className="mt-4 text-3xl font-bold text-[#1F2937]">Create your workspace</h2>
+                <h2 className="mt-4 text-3xl font-bold text-[#1F2937]">Start with the essentials</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Fill in the essentials once. After that, the platform is ready for patients, appointments and daily clinical work.
+                  First create the workspace. After email verification, the customer goes directly to checkout and chooses a payment method inside the same page.
                 </p>
               </div>
 
               <form onSubmit={submit} className="space-y-8">
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                    <ChevronRight className="h-4 w-4 text-[#2C5F7C]" />
-                    Workspace details
+                <section className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="firstName">First name</Label>
+                    <Input id="firstName" value={form.firstName} onChange={(e) => update('firstName', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60" />
                   </div>
-                  <div className="grid gap-4">
-                    <div className="space-y-2">
-                      <Label>{t.register.business}</Label>
-                      <Input value={form.businessName} onChange={(e) => update('businessName', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t.register.owner}</Label>
-                      <Input value={form.ownerName} onChange={(e) => update('ownerName', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                    </div>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>{t.register.email}</Label>
-                        <Input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>{t.register.phone}</Label>
-                        <Input value={form.phone} onChange={(e) => update('phone', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t.register.password}</Label>
-                      <Input type="password" value={form.password} onChange={(e) => update('password', e.target.value)} required minLength={6} className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lastName">Last name</Label>
+                    <Input id="lastName" value={form.lastName} onChange={(e) => update('lastName', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60" />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input id="email" type="email" value={form.email} onChange={(e) => update('email', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone number</Label>
+                    <Input id="phone" value={form.phone} onChange={(e) => update('phone', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="businessName">Business name (optional)</Label>
+                    <Input id="businessName" value={form.businessName || ''} onChange={(e) => update('businessName', e.target.value)} className="h-12 rounded-xl border-slate-200 bg-slate-50/60" />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input id="password" type="password" value={form.password} onChange={(e) => update('password', e.target.value)} required minLength={6} className="h-12 rounded-xl border-slate-200 bg-slate-50/60" />
                   </div>
                 </section>
 
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                    <ChevronRight className="h-4 w-4 text-[#2C5F7C]" />
-                    Billing and address
-                  </div>
-                  <div className="grid gap-4">
-                    <div className="space-y-2">
-                      <Label>{t.register.address}</Label>
-                      <Input value={form.address} onChange={(e) => update('address', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                    </div>
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <div className="space-y-2">
-                        <Label>{t.register.city}</Label>
-                        <Input value={form.city} onChange={(e) => update('city', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>{t.register.country}</Label>
-                        <Input value={form.country} onChange={(e) => update('country', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>{t.register.tax}</Label>
-                        <Input value={form.taxNumber} onChange={(e) => update('taxNumber', e.target.value)} required className="h-12 rounded-xl border-slate-200 bg-slate-50/60 focus-visible:ring-[#2C5F7C]" />
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                    <ChevronRight className="h-4 w-4 text-[#2C5F7C]" />
-                    {t.register.plan}
-                  </div>
+                <section className="space-y-3">
+                  <div className="text-sm font-semibold text-slate-800">Choose your plan</div>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    {(['professional', 'enterprise'] as const).map((p) => {
-                      const selected = form.plan === p;
-                      const title = p === 'professional' ? 'Professional' : 'Enterprise';
-                      const subtitle = p === 'professional' ? 'Clinic / Ordinance' : 'Hospital / Multi-location';
-                      const meta = p === 'professional' ? t.register.professionalMeta : t.register.enterpriseMeta;
-
+                    {planCards.map((plan) => {
+                      const selected = form.plan === plan.code;
                       return (
                         <button
-                          key={p}
+                          key={plan.code}
                           type="button"
-                          onClick={() => update('plan', p)}
+                          onClick={() => update('plan', plan.code)}
                           className={`rounded-2xl border-2 p-5 text-left transition ${
                             selected ? 'border-[#2C5F7C] bg-[#2C5F7C]/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-start justify-between gap-3">
                             <div>
-                              <div className="font-semibold text-[#1F2937]">{title}</div>
-                              <div className="mt-1 text-sm text-slate-500">{subtitle}</div>
+                              <div className="font-semibold text-[#1F2937]">{plan.name}</div>
+                              <div className="mt-1 text-sm text-slate-500">{plan.subtitle}</div>
+                              <div className="mt-3 text-sm text-slate-700">{plan.monthly}</div>
+                              <div className="mt-1 text-sm text-slate-500">{plan.yearly}</div>
+                              <div className="mt-2 text-xs text-slate-500">{plan.extra}</div>
                             </div>
-                            {selected && <Check className="h-5 w-5 text-[#2C5F7C]" />}
+                            {selected ? <Check className="h-5 w-5 text-[#2C5F7C]" /> : null}
                           </div>
-                          <div className="mt-3 text-xs text-slate-500">{meta}</div>
                         </button>
                       );
                     })}
@@ -206,29 +265,25 @@ const Register: React.FC = () => {
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-start gap-3">
-                    <Checkbox id="a" checked={form.agreed} onCheckedChange={(c) => update('agreed', !!c)} />
-                    <label htmlFor="a" className="text-sm leading-relaxed text-slate-600">
-                      {t.register.agreeStart}
-                      <Link to="/legal/terms" className="text-[#2C5F7C] underline">
-                        {t.register.terms}
-                      </Link>{' '}
-                      /{' '}
-                      <Link to="/legal/privacy" className="text-[#2C5F7C] underline">
-                        {t.register.privacy}
+                    <Checkbox id="agreedTerms" checked={form.agreedTerms} onCheckedChange={(checked) => update('agreedTerms', !!checked)} />
+                    <label htmlFor="agreedTerms" className="text-sm leading-relaxed text-slate-600">
+                      I agree to the{' '}
+                      <Link to="/legal/terms" className="font-medium text-[#2C5F7C] underline">
+                        Terms & Conditions
                       </Link>
-                      .
+                      . I understand that a live demo is available before purchase and that subscriptions are generally non-refundable after activation, except where applicable law requires otherwise.
                     </label>
                   </div>
                 </div>
 
                 <Button type="submit" disabled={loading} className="h-12 w-full rounded-xl bg-[#2C5F7C] text-white hover:bg-[#234e66]">
-                  {loading ? t.register.creating : t.register.create}
+                  {loading ? 'Preparing workspace...' : 'Create workspace'}
                 </Button>
 
                 <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-center text-sm text-slate-600">
-                  {t.register.haveAccount}{' '}
+                  Already have an account?{' '}
                   <Link to="/login" className="font-medium text-[#2C5F7C]">
-                    {t.register.signIn}
+                    Sign in
                   </Link>
                 </div>
               </form>

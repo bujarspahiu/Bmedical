@@ -13,12 +13,12 @@ const Brand: React.FC<BrandProps> = ({ theme = 'light', compact = false, showTag
 
   return (
     <div className={clsx('flex items-center gap-3', className)}>
-      <img src="/bmedical.png" alt="Bmedical" className={clsx(compact ? 'h-9' : 'h-10', 'w-auto object-contain')} />
+      <img src="/bmedical.png" alt="BMedical" className={clsx(compact ? 'h-9' : 'h-10', 'w-auto object-contain')} />
       <div className="min-w-0">
-        <div className={clsx('font-bold leading-none', compact ? 'text-base' : 'text-lg', dark ? 'text-white' : 'text-[#1F2937]')}>Bmedical</div>
+        <div className={clsx('font-bold leading-none', compact ? 'text-base' : 'text-lg', dark ? 'text-white' : 'text-[#1F2937]')}>BMedical</div>
         {showTagline && (
           <div className={clsx('text-[10px] tracking-wide', dark ? 'text-slate-400' : 'text-slate-500')}>
-            DIGITAL HEALTH PLATFORM
+            CLINIC OPERATING PLATFORM
           </div>
         )}
       </div>

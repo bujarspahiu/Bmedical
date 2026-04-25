@@ -37,4 +37,24 @@ export async function api<T = unknown>(action: string, payload: Record<string, u
   return data as T;
 }
 
+export async function apiDownload(pathname: string): Promise<Blob> {
+  const token = getStoredToken();
+  const separator = pathname.includes('?') ? '&' : '?';
+  const baseUrl = ENDPOINT.replace(/\/api\/physio$/, '');
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  const res = await fetch(`${baseUrl}${normalizedPath}${token ? `${separator}_token=${encodeURIComponent(token)}` : ''}`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
+      ...(token ? { 'x-physio-token': token } : {}),
+    },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: 'Download failed' }));
+    throw new Error(data?.error || `Download failed (${res.status})`);
+  }
+  return res.blob();
+}
+
 export function clearToken() { storeToken(''); }

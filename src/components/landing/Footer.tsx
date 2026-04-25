@@ -55,7 +55,7 @@ const Footer: React.FC = () => {
         </div>
 
         <div className="border-t border-slate-800 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div className="text-xs text-slate-500">© {new Date().getFullYear()} Bmedical · {t.footer.rights}</div>
+              <div className="text-xs text-slate-500">© {new Date().getFullYear()} BMedical · {t.footer.rights}</div>
           <div className="flex gap-6 text-xs text-slate-500">
             <span>{t.footer.compliance}</span>
             <span>{t.footer.uptime}</span>

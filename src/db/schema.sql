@@ -30,6 +30,50 @@ CREATE TABLE subscription_plans (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE platform_backups (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trigger_type    TEXT NOT NULL DEFAULT 'manual',
+  schedule_id     UUID,
+  backup_kind     TEXT NOT NULL DEFAULT 'database',
+  engine          TEXT NOT NULL DEFAULT 'json_snapshot',
+  format          TEXT NOT NULL DEFAULT 'json.gz',
+  status          TEXT NOT NULL DEFAULT 'pending',
+  file_name       TEXT,
+  storage_path    TEXT,
+  content_type    TEXT,
+  file_size_bytes BIGINT NOT NULL DEFAULT 0,
+  retention_days  INTEGER NOT NULL DEFAULT 14,
+  started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at    TIMESTAMPTZ,
+  error_message   TEXT,
+  created_by      UUID REFERENCES platform_admins(id) ON DELETE SET NULL
+);
+
+CREATE TABLE platform_backup_schedules (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  frequency      TEXT NOT NULL,
+  hour           INTEGER NOT NULL,
+  minute         INTEGER NOT NULL,
+  day_of_week    INTEGER,
+  day_of_month   INTEGER,
+  retention_days INTEGER NOT NULL DEFAULT 14,
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  last_run_at    TIMESTAMPTZ,
+  next_run_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by     UUID REFERENCES platform_admins(id) ON DELETE SET NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE platform_backup_logs (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  backup_id   UUID REFERENCES platform_backups(id) ON DELETE CASCADE,
+  schedule_id UUID REFERENCES platform_backup_schedules(id) ON DELETE SET NULL,
+  level       TEXT NOT NULL DEFAULT 'info',
+  message     TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ========== TENANTS (clinic / hospital / ordinance) ==========
 CREATE TABLE tenants (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -400,3 +444,99 @@ VALUES
   ('enterprise', 'Enterprise', 0, 'yearly', NULL, NULL, NULL,
     '{"locations":-1,"advanced_analytics":true,"custom_branding":true,"api":true,"priority_support":true}'::jsonb)
 ON CONFLICT (code) DO NOTHING;
+
+-- ========== COMMERCE UPGRADES ==========
+ALTER TABLE subscription_plans
+  ADD COLUMN IF NOT EXISTS monthly_price_cents INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS yearly_price_cents INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS included_users INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS extra_user_monthly_cents INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS extra_user_yearly_cents INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS summary TEXT;
+
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT 'monthly';
+
+ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+  ADD COLUMN IF NOT EXISTS renews_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS seat_count INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS total_amount_cents INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_tenant_unique ON subscriptions(tenant_id);
+
+CREATE TABLE IF NOT EXISTS signup_verifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  purpose TEXT NOT NULL DEFAULT 'signup_verification',
+  expires_at TIMESTAMPTZ NOT NULL,
+  verified_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS platform_payment_transactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  customer_email TEXT NOT NULL,
+  customer_name TEXT NOT NULL,
+  plan_code TEXT NOT NULL,
+  billing_cycle TEXT NOT NULL,
+  seat_count INTEGER NOT NULL DEFAULT 1,
+  included_users INTEGER NOT NULL DEFAULT 1,
+  extra_users INTEGER NOT NULL DEFAULT 0,
+  base_amount_cents INTEGER NOT NULL DEFAULT 0,
+  extra_users_amount_cents INTEGER NOT NULL DEFAULT 0,
+  total_amount_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'EUR',
+  method TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_manual_review',
+  bank_region TEXT,
+  reference_code TEXT,
+  proof_note TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  approved_by UUID REFERENCES platform_admins(id) ON DELETE SET NULL,
+  approved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+UPDATE subscription_plans
+   SET monthly_price_cents = CASE code
+         WHEN 'professional' THEN 2000
+         WHEN 'enterprise' THEN 5000
+         ELSE monthly_price_cents
+       END,
+       yearly_price_cents = CASE code
+         WHEN 'professional' THEN 20000
+         WHEN 'enterprise' THEN 50000
+         ELSE yearly_price_cents
+       END,
+       included_users = 1,
+       extra_user_monthly_cents = CASE code
+         WHEN 'professional' THEN 2000
+         WHEN 'enterprise' THEN 5000
+         ELSE extra_user_monthly_cents
+       END,
+       extra_user_yearly_cents = CASE code
+         WHEN 'professional' THEN 20000
+         WHEN 'enterprise' THEN 50000
+         ELSE extra_user_yearly_cents
+       END,
+       summary = CASE code
+         WHEN 'professional' THEN 'Clinic / Ordinance'
+         WHEN 'enterprise' THEN 'Hospital / Multi-location'
+         ELSE summary
+       END,
+       price_cents = CASE code
+         WHEN 'professional' THEN 2000
+         WHEN 'enterprise' THEN 5000
+         ELSE price_cents
+       END
+ WHERE code IN ('professional', 'enterprise');

@@ -11,6 +11,8 @@ import ClinicLayout from "./components/clinic/ClinicLayout";
 
 const Landing = lazy(() => import("./pages/Landing"));
 const Register = lazy(() => import("./pages/Register"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
+const Checkout = lazy(() => import("./pages/Checkout"));
 const Login = lazy(() => import("./pages/Login"));
 const AdminLogin = lazy(() => import("./pages/AdminLogin"));
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
@@ -69,6 +71,8 @@ const App = () => (
                 {/* Public */}
                 <Route path="/" element={<Landing />} />
                 <Route path="/register" element={<Register />} />
+                <Route path="/verify-email" element={<VerifyEmail />} />
+                <Route path="/checkout" element={<Checkout />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/legal/:doc" element={<Legal />} />
                 <Route path="/legal" element={<Navigate to="/legal/terms" replace />} />

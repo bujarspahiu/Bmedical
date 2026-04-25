@@ -1,6 +1,11 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
+import zlib from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
+import { spawn } from 'node:child_process';
 import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
@@ -246,6 +251,61 @@ const adminTenantStatusSchema = z.object({
   status: z.enum(['active', 'suspended']),
 });
 
+const backupRunSchema = z.object({
+  retentionDays: z.coerce.number().int().min(1).max(365).optional(),
+});
+
+const backupDeleteSchema = z.object({
+  id: z.string().uuid('Invalid backup id'),
+});
+
+const backupScheduleUpsertSchema = z.object({
+  id: z.string().uuid('Invalid schedule id').optional(),
+  frequency: z.enum(['daily', 'weekly', 'monthly']),
+  hour: z.coerce.number().int().min(0).max(23),
+  minute: z.coerce.number().int().min(0).max(59),
+  dayOfWeek: z.coerce.number().int().min(0).max(6).optional().nullable(),
+  dayOfMonth: z.coerce.number().int().min(1).max(28).optional().nullable(),
+  retentionDays: z.coerce.number().int().min(1).max(365),
+  isActive: z.boolean(),
+});
+
+const planCodeSchema = z.enum(['professional', 'enterprise']);
+const billingCycleSchema = z.enum(['monthly', 'yearly']);
+
+const signupRegisterSchema = z.object({
+  firstName: z.string().trim().min(1, 'First name is required').max(120),
+  lastName: z.string().trim().min(1, 'Last name is required').max(120),
+  email: z.string().trim().email('Invalid email address').max(160),
+  phone: z.string().trim().min(1, 'Phone number is required').max(50),
+  businessName: z.string().trim().max(180).optional().nullable(),
+  password: z.string().trim().min(6, 'Password must be at least 6 characters').max(120),
+  plan: planCodeSchema,
+  agreedTerms: z.boolean().refine((value) => value === true, 'You must accept the terms to continue'),
+});
+
+const signupTokenSchema = z.object({
+  token: z.string().trim().min(1, 'Missing checkout token'),
+});
+
+const signupPaymentSchema = z.object({
+  token: z.string().trim().min(1, 'Missing checkout token'),
+  method: z.enum(['bank_transfer', 'card', 'paypal']),
+  billingCycle: billingCycleSchema,
+  seatCount: z.coerce.number().int().min(1).max(250),
+  bankRegion: z.enum(['kosovo', 'sepa']).optional().nullable(),
+  paymentProofNote: z.string().trim().max(2000).optional().nullable(),
+  cardholderName: z.string().trim().max(160).optional().nullable(),
+  cardLast4: z.string().trim().regex(/^\d{4}$/, 'Card last 4 must contain exactly 4 digits').optional().nullable(),
+  paypalEmail: z.string().trim().email('Invalid PayPal email').max(160).optional().nullable(),
+});
+
+const adminManualPaymentReviewSchema = z.object({
+  transactionId: z.string().uuid('Invalid transaction id'),
+  decision: z.enum(['approve', 'reject']),
+  notes: z.string().trim().max(2000).optional().nullable(),
+});
+
 const defaultServices = [
   { name: 'Initial Physiotherapy Consultation', category: 'Consultation', duration: 45, priceCents: 6000 },
   { name: 'Manual Therapy Session', category: 'Therapy', duration: 45, priceCents: 7000 },
@@ -291,6 +351,33 @@ const pool = new Pool({
   query_timeout: Number(process.env.DB_QUERY_TIMEOUT_MS || 15000),
 });
 
+const backupRootDir = path.resolve(process.cwd(), process.env.BACKUP_DIRECTORY || 'server/backups');
+const backupJobLocks = new Set();
+let backupSchedulerInterval = null;
+
+const appBaseUrl = process.env.APP_BASE_URL || frontendOrigin;
+const resendApiKey = process.env.RESEND_API_KEY || '';
+const resendFromEmail = process.env.RESEND_FROM_EMAIL || '';
+const allowLocalVerificationLink = process.env.ALLOW_LOCAL_VERIFICATION_LINK === 'true' || process.env.NODE_ENV !== 'production';
+const defaultBankDetails = {
+  kosovo: {
+    region: 'Kosovo',
+    provider: process.env.BANK_PROVIDER_KOSOVO || 'Paysera',
+    beneficiary: process.env.BANK_BENEFICIARY || 'BMedical',
+    iban: process.env.BANK_IBAN_KOSOVO || 'XK000000000000000000',
+    bic: process.env.BANK_BIC_KOSOVO || 'EUBKOXXXXXX',
+    referencePrefix: process.env.BANK_REFERENCE_PREFIX || 'BMD',
+  },
+  sepa: {
+    region: 'International / SEPA Zone',
+    provider: process.env.BANK_PROVIDER_SEPA || 'Paysera',
+    beneficiary: process.env.BANK_BENEFICIARY || 'BMedical',
+    iban: process.env.BANK_IBAN_SEPA || 'LT000000000000000000',
+    bic: process.env.BANK_BIC_SEPA || 'EVIULT2VXXX',
+    referencePrefix: process.env.BANK_REFERENCE_PREFIX || 'BMD',
+  },
+};
+
 const allowedOrigins = frontendOrigin.split(',').map((value) => value.trim()).filter(Boolean);
 
 app.disable('x-powered-by');
@@ -319,6 +406,34 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+app.get('/api/admin/backups/:id/download', async (req, res) => {
+  try {
+    const session = await requireAdminSession(req);
+    const backup = await getBackupDownloadRecord(req.params.id);
+    if (!backup) throw new AppError(404, 'Backup not found');
+    if (backup.status !== 'completed') throw new AppError(409, 'Backup is not ready for download');
+    await fsp.access(backup.storagePath, fs.constants.R_OK);
+    await insertAuditLog({
+      userId: session.sub,
+      actorType: 'platform_admin',
+      action: 'download',
+      entity: 'platform_backup',
+      entityId: backup.id,
+      metadata: { fileName: backup.fileName },
+    });
+    res.setHeader('Content-Type', backup.contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${backup.fileName}"`);
+    res.setHeader('Content-Length', String(backup.fileSizeBytes || 0));
+    await pipeline(fs.createReadStream(backup.storagePath), res);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unexpected server error';
+    const statusCode = error instanceof AppError ? error.status : 500;
+    if (!res.headersSent) {
+      res.status(statusCode).json({ error: message });
+    }
+  }
+});
+
 app.post('/api/physio', async (req, res) => {
   try {
     const { action, ...payload } = req.body || {};
@@ -344,8 +459,16 @@ app.post('/api/physio', async (req, res) => {
         return writeAuthResponse(res, user);
       }
       case 'register': {
-        const user = await registerTenant(payload);
-        return writeAuthResponse(res, user);
+        return res.status(201).json(await registerTenant(payload));
+      }
+      case 'signup_verify': {
+        return res.json(await verifySignupRegistration(payload));
+      }
+      case 'signup_checkout_get': {
+        return res.json(await getSignupCheckout(payload));
+      }
+      case 'signup_payment_submit': {
+        return res.status(201).json(await submitSignupPayment(payload));
       }
       case 'patients_list': {
         const tenant = await requireTenantSession(req);
@@ -529,6 +652,38 @@ app.post('/api/physio', async (req, res) => {
         await insertAuditLog({ userId: session.sub, actorType: 'platform_admin', action: 'update_status', entity: 'tenant', entityId: tenant.id, metadata: { status: tenant.status } });
         return res.json({ tenant });
       }
+      case 'admin_backups_overview': {
+        await requireAdminSession(req);
+        return res.json(await getBackupsOverview());
+      }
+      case 'admin_backup_run_now': {
+        const session = await requireAdminSession(req);
+        const backup = await createPlatformBackup({ initiatedBy: session.sub, triggerType: 'manual', payload });
+        await insertAuditLog({ userId: session.sub, actorType: 'platform_admin', action: 'create', entity: 'platform_backup', entityId: backup.id, metadata: { status: backup.status, triggerType: backup.triggerType } });
+        return res.status(201).json({ backup });
+      }
+      case 'admin_backup_delete': {
+        const session = await requireAdminSession(req);
+        const backup = await deletePlatformBackup(payload);
+        await insertAuditLog({ userId: session.sub, actorType: 'platform_admin', action: 'delete', entity: 'platform_backup', entityId: backup.id, metadata: { fileName: backup.fileName } });
+        return res.json({ backup });
+      }
+      case 'admin_backup_schedule_upsert': {
+        const session = await requireAdminSession(req);
+        const schedule = await upsertBackupSchedule(session.sub, payload);
+        await insertAuditLog({ userId: session.sub, actorType: 'platform_admin', action: 'upsert', entity: 'platform_backup_schedule', entityId: schedule.id, metadata: { frequency: schedule.frequency, isActive: schedule.isActive } });
+        return res.json({ schedule });
+      }
+      case 'admin_billing_overview': {
+        await requireAdminSession(req);
+        return res.json(await getAdminBillingOverview());
+      }
+      case 'admin_manual_payment_review': {
+        const session = await requireAdminSession(req);
+        const result = await reviewManualPayment(session.sub, payload);
+        await insertAuditLog({ userId: session.sub, actorType: 'platform_admin', action: 'review', entity: 'platform_payment', entityId: result.transaction.id, metadata: { decision: result.decision, tenantId: result.transaction.tenantId } });
+        return res.json(result);
+      }
       default:
         return res.status(400).json({ error: 'Unsupported action' });
     }
@@ -550,7 +705,10 @@ pool.on('error', (error) => {
 const server = app.listen(port, async () => {
   try {
     await ensureSuperAdmin();
-    console.log(`Bmedical API listening on port ${port}`);
+    await ensureBackupInfrastructure();
+    await ensureCommerceInfrastructure();
+    startBackupScheduler();
+    console.log(`BMedical API listening on port ${port}`);
   } catch (error) {
     console.error('API started but super admin bootstrap failed:', error.message);
   }
@@ -561,7 +719,8 @@ let isShuttingDown = false;
 async function shutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`${signal} received, closing Bmedical API gracefully...`);
+  console.log(`${signal} received, closing BMedical API gracefully...`);
+  stopBackupScheduler();
   server.close(async () => {
     try {
       await pool.end();
@@ -605,7 +764,8 @@ function getToken(req) {
   const bearer = req.headers.authorization?.startsWith('Bearer ')
     ? req.headers.authorization.slice('Bearer '.length)
     : '';
-  return req.headers['x-physio-token'] || cookies[cookieName] || bearer || req.body?._token || '';
+  const queryToken = req.query?._token;
+  return req.headers['x-physio-token'] || cookies[cookieName] || bearer || req.body?._token || queryToken || '';
 }
 
 function signToken(payload) {
@@ -689,7 +849,7 @@ function mapAdminUser(row) {
     email: row.email,
     role: 'owner',
     tenantId: 'platform-admin',
-    tenantName: 'Bmedical Platform',
+    tenantName: 'BMedical Platform',
     plan: 'enterprise',
     isAdmin: true,
   };
@@ -769,13 +929,16 @@ async function loginTenantUser(email, password) {
 }
 
 async function registerTenant(payload) {
-  const requiredFields = ['businessName', 'ownerName', 'email', 'password', 'plan'];
-  for (const field of requiredFields) {
-    if (!payload[field]) throw new Error(`Missing required field: ${field}`);
+  const parsed = signupRegisterSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid registration payload');
   }
 
-  const email = String(payload.email).trim().toLowerCase();
-  const passwordHash = await bcrypt.hash(String(payload.password), 12);
+  const input = parsed.data;
+  const email = input.email.trim().toLowerCase();
+  const passwordHash = await bcrypt.hash(String(input.password), 12);
+  const ownerName = `${input.firstName} ${input.lastName}`.trim();
+  const businessName = normalizeOptionalText(input.businessName) || `${ownerName} Practice`;
   const client = await pool.connect();
 
   try {
@@ -784,24 +947,27 @@ async function registerTenant(payload) {
     const roleResult = await client.query("SELECT id FROM roles WHERE code = 'owner'");
     if (!roleResult.rows[0]) throw new Error('Owner role is missing. Run the schema seed first.');
 
-    const planCode = String(payload.plan || 'professional').trim().toLowerCase();
-    const planResult = await client.query('SELECT id, code FROM subscription_plans WHERE code = $1 AND is_active = TRUE', [planCode]);
+    const planCode = input.plan;
+    const planResult = await client.query(
+      `SELECT id, code
+       FROM subscription_plans
+       WHERE code = $1
+         AND is_active = TRUE`,
+      [planCode],
+    );
+    if (!planResult.rows[0]) throw new Error('Selected subscription plan is not available');
 
     const tenantResult = await client.query(
       `INSERT INTO tenants (
-         business_name, owner_name, email, phone, address, city, country, tax_number, type, current_plan_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         business_name, owner_name, email, phone, address, city, country, tax_number, type, current_plan_id, status, billing_cycle
+       ) VALUES ($1, $2, $3, $4, NULL, NULL, 'Kosovo', NULL, $5, $6, 'pending_verification', 'monthly')
        RETURNING id, business_name`,
       [
-        payload.businessName,
-        payload.ownerName,
+        businessName,
+        ownerName,
         email,
-        payload.phone || null,
-        payload.address || null,
-        payload.city || null,
-        payload.country || null,
-        payload.taxNumber || null,
-        payload.type || 'clinic',
+        input.phone || null,
+        planCode === 'enterprise' ? 'hospital' : 'clinic',
         planResult.rows[0]?.id || null,
       ],
     );
@@ -815,16 +981,23 @@ async function registerTenant(payload) {
         tenant.id,
         email,
         passwordHash,
-        payload.ownerName,
-        payload.phone || null,
+        ownerName,
+        input.phone || null,
         roleResult.rows[0].id,
       ],
     );
 
+    const verification = await createSignupVerification(client, {
+      tenantId: tenant.id,
+      email,
+      ownerName,
+      planCode,
+    });
+
     await client.query(
       `INSERT INTO audit_logs (tenant_id, user_id, actor_type, action, entity, entity_id, metadata)
-       VALUES ($1, $2, 'tenant_user', 'register', 'tenant', $1, $3::jsonb)`,
-      [tenant.id, userResult.rows[0].id, JSON.stringify({ email })],
+       VALUES ($1, $2, 'tenant_user', 'register_pending', 'tenant', $1, $3::jsonb)`,
+      [tenant.id, userResult.rows[0].id, JSON.stringify({ email, planCode })],
     );
 
     await client.query(
@@ -837,14 +1010,23 @@ async function registerTenant(payload) {
 
     await client.query('COMMIT');
 
+    await sendSignupVerificationEmail({
+      to: email,
+      ownerName,
+      businessName: tenant.business_name,
+      verificationUrl: verification.url,
+      expiresAt: verification.expiresAt,
+      planCode,
+    });
+
     return {
-      id: userResult.rows[0].id,
-      name: userResult.rows[0].full_name,
-      email: userResult.rows[0].email,
-      role: 'owner',
+      email,
       tenantId: tenant.id,
       tenantName: tenant.business_name,
       plan: planResult.rows[0]?.code || 'professional',
+      verificationRequired: true,
+      verificationUrl: allowLocalVerificationLink ? verification.url : undefined,
+      verificationExpiresAt: verification.expiresAt,
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -860,7 +1042,7 @@ async function registerTenant(payload) {
 async function ensureSuperAdmin() {
   const email = String(process.env.SUPERADMIN_EMAIL || 'admin@bmedical.com').trim().toLowerCase();
   const password = String(process.env.SUPERADMIN_PASSWORD || 'admin@bmedical.com');
-  const fullName = process.env.SUPERADMIN_NAME || 'Bmedical Super Admin';
+  const fullName = process.env.SUPERADMIN_NAME || 'BMedical Super Admin';
 
   const existsResult = await pool.query('SELECT 1 FROM platform_admins WHERE email = $1', [email]);
   if (existsResult.rows[0]) return;
@@ -871,6 +1053,1031 @@ async function ensureSuperAdmin() {
      VALUES ($1, $2, $3, TRUE)`,
     [email, passwordHash, fullName],
   );
+}
+
+async function ensureCommerceInfrastructure() {
+  await pool.query(`
+    ALTER TABLE tenants
+      ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT 'monthly'
+  `);
+  await pool.query(`
+    ALTER TABLE subscription_plans
+      ADD COLUMN IF NOT EXISTS monthly_price_cents INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS yearly_price_cents INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS included_users INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS extra_user_monthly_cents INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS extra_user_yearly_cents INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS summary TEXT
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS signup_verifications (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      token_hash TEXT UNIQUE NOT NULL,
+      purpose TEXT NOT NULL DEFAULT 'signup_verification',
+      expires_at TIMESTAMPTZ NOT NULL,
+      verified_at TIMESTAMPTZ,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_payment_transactions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      customer_email TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      plan_code TEXT NOT NULL,
+      billing_cycle TEXT NOT NULL,
+      seat_count INTEGER NOT NULL DEFAULT 1,
+      included_users INTEGER NOT NULL DEFAULT 1,
+      extra_users INTEGER NOT NULL DEFAULT 0,
+      base_amount_cents INTEGER NOT NULL DEFAULT 0,
+      extra_users_amount_cents INTEGER NOT NULL DEFAULT 0,
+      total_amount_cents INTEGER NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      method TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_manual_review',
+      bank_region TEXT,
+      reference_code TEXT,
+      proof_note TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      approved_by UUID REFERENCES platform_admins(id) ON DELETE SET NULL,
+      approved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      plan_id UUID NOT NULL REFERENCES subscription_plans(id),
+      status TEXT NOT NULL DEFAULT 'active',
+      billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+      current_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      current_end TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      renews_at TIMESTAMPTZ,
+      seat_count INTEGER NOT NULL DEFAULT 1,
+      total_amount_cents INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    ALTER TABLE subscriptions
+      ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+      ADD COLUMN IF NOT EXISTS seat_count INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS total_amount_cents INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_tenant_unique ON subscriptions(tenant_id)`);
+
+  await pool.query(`
+    UPDATE subscription_plans
+       SET monthly_price_cents = CASE code
+         WHEN 'professional' THEN 2000
+         WHEN 'enterprise' THEN 5000
+         ELSE monthly_price_cents
+       END,
+           yearly_price_cents = CASE code
+         WHEN 'professional' THEN 20000
+         WHEN 'enterprise' THEN 50000
+         ELSE yearly_price_cents
+       END,
+           included_users = 1,
+           extra_user_monthly_cents = CASE code
+         WHEN 'professional' THEN 2000
+         WHEN 'enterprise' THEN 5000
+         ELSE extra_user_monthly_cents
+       END,
+           extra_user_yearly_cents = CASE code
+         WHEN 'professional' THEN 20000
+         WHEN 'enterprise' THEN 50000
+         ELSE extra_user_yearly_cents
+       END,
+           summary = CASE code
+         WHEN 'professional' THEN 'Clinic / Ordinance'
+         WHEN 'enterprise' THEN 'Hospital / Multi-location'
+         ELSE summary
+       END,
+           price_cents = CASE code
+         WHEN 'professional' THEN 2000
+         WHEN 'enterprise' THEN 5000
+         ELSE price_cents
+       END
+     WHERE code IN ('professional', 'enterprise')
+  `);
+}
+
+async function ensureBackupInfrastructure() {
+  await fsp.mkdir(backupRootDir, { recursive: true });
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_backups (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      trigger_type TEXT NOT NULL DEFAULT 'manual',
+      schedule_id UUID,
+      backup_kind TEXT NOT NULL DEFAULT 'database',
+      engine TEXT NOT NULL DEFAULT 'json_snapshot',
+      format TEXT NOT NULL DEFAULT 'json.gz',
+      status TEXT NOT NULL DEFAULT 'pending',
+      file_name TEXT,
+      storage_path TEXT,
+      content_type TEXT,
+      file_size_bytes BIGINT NOT NULL DEFAULT 0,
+      retention_days INTEGER NOT NULL DEFAULT 14,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      error_message TEXT,
+      created_by UUID REFERENCES platform_admins(id) ON DELETE SET NULL
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_backup_schedules (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      frequency TEXT NOT NULL,
+      hour INTEGER NOT NULL,
+      minute INTEGER NOT NULL,
+      day_of_week INTEGER,
+      day_of_month INTEGER,
+      retention_days INTEGER NOT NULL DEFAULT 14,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      last_run_at TIMESTAMPTZ,
+      next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by UUID REFERENCES platform_admins(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`ALTER TABLE platform_backup_schedules ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_backup_logs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      backup_id UUID REFERENCES platform_backups(id) ON DELETE CASCADE,
+      schedule_id UUID REFERENCES platform_backup_schedules(id) ON DELETE SET NULL,
+      level TEXT NOT NULL DEFAULT 'info',
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+function startBackupScheduler() {
+  if (backupSchedulerInterval) return;
+  backupSchedulerInterval = setInterval(() => {
+    void runDueBackupSchedules();
+  }, 60_000);
+  void runDueBackupSchedules();
+}
+
+function stopBackupScheduler() {
+  if (!backupSchedulerInterval) return;
+  clearInterval(backupSchedulerInterval);
+  backupSchedulerInterval = null;
+}
+
+async function runDueBackupSchedules() {
+  try {
+    const result = await pool.query(
+      `SELECT id
+       FROM platform_backup_schedules
+       WHERE is_active = TRUE
+         AND next_run_at <= NOW()
+       ORDER BY next_run_at ASC`,
+    );
+    for (const row of result.rows) {
+      if (backupJobLocks.has(`schedule:${row.id}`)) continue;
+      backupJobLocks.add(`schedule:${row.id}`);
+      try {
+        await createPlatformBackup({ triggerType: 'scheduled', scheduleId: row.id });
+        await bumpScheduleAfterRun(row.id);
+      } catch (error) {
+        await appendBackupLog({
+          scheduleId: row.id,
+          level: 'error',
+          message: error instanceof Error ? error.message : 'Scheduled backup failed',
+        });
+      } finally {
+        backupJobLocks.delete(`schedule:${row.id}`);
+      }
+    }
+  } catch (error) {
+    console.error('Backup scheduler failed:', error instanceof Error ? error.message : error);
+  }
+}
+
+async function sendSignupVerificationEmail({ to, ownerName, businessName, verificationUrl, expiresAt, planCode }) {
+  if (!resendApiKey || !resendFromEmail) {
+    console.warn('Resend is not configured. Verification email was not sent.');
+    return { delivered: false, reason: 'missing_resend_configuration' };
+  }
+
+  const planLabel = planCode === 'enterprise' ? 'Enterprise' : 'Professional';
+  const expiresLabel = new Date(expiresAt).toLocaleString('en-GB', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; background: #f8fbfd; padding: 32px; color: #0f172a;">
+      <div style="max-width: 640px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 24px; overflow: hidden;">
+        <div style="background: linear-gradient(135deg, #1E4057 0%, #2C5F7C 55%, #6AA6B9 100%); color: white; padding: 28px 32px;">
+          <div style="font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.78;">BMedical</div>
+          <h1 style="margin: 10px 0 0; font-size: 28px; line-height: 1.2;">Verify your email to continue</h1>
+          <p style="margin: 12px 0 0; font-size: 15px; line-height: 1.7; opacity: 0.88;">
+            Your workspace is almost ready. One quick verification keeps the checkout calm and secure.
+          </p>
+        </div>
+        <div style="padding: 32px;">
+          <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Hello ${escapeHtml(ownerName)},</p>
+          <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">
+            We prepared your <strong>${escapeHtml(planLabel)}</strong> workspace for <strong>${escapeHtml(businessName)}</strong>.
+            Please verify this email before continuing to the payment page.
+          </p>
+          <div style="margin: 28px 0;">
+            <a href="${verificationUrl}" style="display: inline-block; background: #2C5F7C; color: white; text-decoration: none; padding: 14px 22px; border-radius: 14px; font-weight: 600;">
+              Verify email and continue
+            </a>
+          </div>
+          <p style="margin: 0 0 12px; font-size: 14px; line-height: 1.7; color: #475569;">
+            This verification link expires on <strong>${escapeHtml(expiresLabel)}</strong>.
+          </p>
+          <p style="margin: 0 0 12px; font-size: 14px; line-height: 1.7; color: #475569;">
+            If the button above does not open, copy this link into your browser:
+          </p>
+          <p style="margin: 0; padding: 14px; background: #f8fafc; border-radius: 14px; font-size: 13px; line-height: 1.7; color: #0f172a; word-break: break-all;">
+            ${escapeHtml(verificationUrl)}
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${resendApiKey}`,
+    },
+    body: JSON.stringify({
+      from: resendFromEmail,
+      to: [to],
+      subject: 'Verify your BMedical workspace email',
+      html,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    console.error('Resend delivery failed:', errorBody || response.statusText);
+    throw new AppError(502, 'Verification email could not be delivered');
+  }
+
+  return { delivered: true };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function createSignupVerification(client, { tenantId, email, ownerName, planCode }) {
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const token = signToken({
+    type: 'signup_verification',
+    tenantId,
+    email,
+    exp: expiresAt.getTime(),
+  });
+  const tokenHash = hashOpaqueToken(token);
+
+  await client.query(
+    `INSERT INTO signup_verifications (tenant_id, email, token_hash, purpose, expires_at, metadata)
+     VALUES ($1, $2, $3, 'signup_verification', $4, $5::jsonb)`,
+    [tenantId, email, tokenHash, expiresAt.toISOString(), JSON.stringify({ ownerName, planCode })],
+  );
+
+  return {
+    token,
+    url: `${appBaseUrl}/verify-email?token=${encodeURIComponent(token)}`,
+    expiresAt: expiresAt.toISOString(),
+  };
+}
+
+function hashOpaqueToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+async function loadSignupContext(token, { allowPendingVerification = false } = {}) {
+  const parsed = signupTokenSchema.safeParse({ token });
+  if (!parsed.success) throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid verification token');
+
+  const signedPayload = verifyToken(parsed.data.token);
+  if (!signedPayload || signedPayload.type !== 'signup_verification') {
+    throw new AppError(400, 'Verification link is invalid or has expired');
+  }
+
+  const tokenHash = hashOpaqueToken(parsed.data.token);
+  const verificationResult = await pool.query(
+    `SELECT sv.id, sv.tenant_id, sv.email, sv.expires_at, sv.verified_at,
+            t.business_name, t.owner_name, t.phone, t.status,
+            COALESCE(sp.code, 'professional') AS plan_code,
+            COALESCE(sp.name, 'Professional') AS plan_name,
+            tu.id AS owner_user_id
+     FROM signup_verifications sv
+     JOIN tenants t ON t.id = sv.tenant_id
+     LEFT JOIN subscription_plans sp ON sp.id = t.current_plan_id
+     LEFT JOIN tenant_users tu ON tu.tenant_id = t.id
+     LEFT JOIN roles r ON r.id = tu.role_id
+     WHERE sv.token_hash = $1
+       AND sv.purpose = 'signup_verification'
+       AND (r.code = 'owner' OR r.code IS NULL)
+     ORDER BY tu.created_at ASC NULLS LAST
+     LIMIT 1`,
+    [tokenHash],
+  );
+
+  const context = verificationResult.rows[0];
+  if (!context) throw new AppError(404, 'Verification session was not found');
+  if (new Date(context.expires_at).getTime() < Date.now()) {
+    throw new AppError(410, 'Verification session has expired');
+  }
+  if (!allowPendingVerification && context.status === 'pending_verification') {
+    throw new AppError(409, 'Email verification must be completed first');
+  }
+
+  return {
+    token: parsed.data.token,
+    verificationId: context.id,
+    tenantId: context.tenant_id,
+    email: context.email,
+    businessName: context.business_name,
+    ownerName: context.owner_name,
+    phone: context.phone || '',
+    status: context.status,
+    planCode: context.plan_code || 'professional',
+    planName: context.plan_name || 'Professional',
+    ownerUserId: context.owner_user_id || null,
+    verifiedAt: context.verified_at,
+  };
+}
+
+async function verifySignupRegistration(payload) {
+  const context = await loadSignupContext(payload.token, { allowPendingVerification: true });
+
+  if (context.status === 'pending_verification') {
+    await pool.query(
+      `UPDATE tenants
+          SET status = 'verified_unpaid',
+              verified_at = NOW()
+        WHERE id = $1`,
+      [context.tenantId],
+    );
+    await pool.query(
+      `UPDATE signup_verifications
+          SET verified_at = COALESCE(verified_at, NOW())
+        WHERE id = $1`,
+      [context.verificationId],
+    );
+    await insertAuditLog({
+      tenantId: context.tenantId,
+      userId: context.ownerUserId,
+      actorType: 'tenant_user',
+      action: 'verify_email',
+      entity: 'tenant',
+      entityId: context.tenantId,
+      metadata: { email: context.email },
+    });
+  }
+
+  return getSignupCheckout(payload);
+}
+
+async function getSignupCheckout(payload) {
+  const context = await loadSignupContext(payload.token, { allowPendingVerification: false });
+  const pricingRules = await getPricingRules();
+  const selectedRule = pricingRules.find((rule) => rule.code === context.planCode) || pricingRules[0] || null;
+
+  return {
+    token: context.token,
+    tenant: {
+      tenantId: context.tenantId,
+      businessName: context.businessName,
+      ownerName: context.ownerName,
+      email: context.email,
+      phone: context.phone,
+      status: context.status,
+      plan: context.planCode,
+    },
+    selectedPlan: selectedRule,
+    pricingRules,
+    bankDetails: buildBankDetails(context.tenantId),
+  };
+}
+
+function buildBankDetails(tenantId) {
+  const reference = `BMD-${String(tenantId).slice(0, 8).toUpperCase()}`;
+  return {
+    kosovo: {
+      ...defaultBankDetails.kosovo,
+      reference,
+      paymentDescription: `BMedical subscription - ${reference}`,
+      verificationWindow: 'Up to 3 business days',
+    },
+    sepa: {
+      ...defaultBankDetails.sepa,
+      reference,
+      paymentDescription: `BMedical subscription - ${reference}`,
+      verificationWindow: 'Up to 3 business days',
+    },
+  };
+}
+
+async function submitSignupPayment(payload) {
+  const parsed = signupPaymentSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid payment request');
+  }
+
+  const input = parsed.data;
+  const context = await loadSignupContext(input.token, { allowPendingVerification: false });
+  const pricingRules = await getPricingRules();
+  const pricingRule = pricingRules.find((rule) => rule.code === context.planCode);
+  if (!pricingRule) throw new AppError(404, 'Pricing rule not found');
+  if (input.method !== 'bank_transfer') {
+    throw new AppError(409, 'This payment method is not live yet');
+  }
+
+  const includedUsers = pricingRule.includedUsers;
+  const extraUsers = Math.max(0, input.seatCount - includedUsers);
+  const baseAmountCents = input.billingCycle === 'yearly' ? pricingRule.yearlyPriceCents : pricingRule.monthlyPriceCents;
+  const extraUsersAmountCents = extraUsers * (input.billingCycle === 'yearly' ? pricingRule.extraUserYearlyCents : pricingRule.extraUserMonthlyCents);
+  const totalAmountCents = baseAmountCents + extraUsersAmountCents;
+  const isInstant = false;
+  const transactionStatus = isInstant ? 'completed' : 'pending_manual_review';
+  const tenantStatus = isInstant ? 'active' : 'payment_pending_manual_review';
+  const referenceCode = `${input.method.slice(0, 2).toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const transactionResult = await client.query(
+      `INSERT INTO platform_payment_transactions (
+         tenant_id, customer_email, customer_name, plan_code, billing_cycle, seat_count,
+         included_users, extra_users, base_amount_cents, extra_users_amount_cents, total_amount_cents,
+         currency, method, provider, status, bank_region, reference_code, proof_note, metadata
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6,
+         $7, $8, $9, $10, $11,
+         'EUR', $12, $13, $14, $15, $16, $17, $18::jsonb
+       )
+       RETURNING id, tenant_id, customer_email, customer_name, plan_code, billing_cycle, seat_count, total_amount_cents, method, status, created_at`,
+      [
+        context.tenantId,
+        context.email,
+        context.ownerName,
+        pricingRule.code,
+        input.billingCycle,
+        input.seatCount,
+        includedUsers,
+        extraUsers,
+        baseAmountCents,
+        extraUsersAmountCents,
+        totalAmountCents,
+        input.method,
+        input.method === 'bank_transfer' ? `bank_${input.bankRegion || 'kosovo'}` : input.method,
+        transactionStatus,
+        input.bankRegion || null,
+        referenceCode,
+        normalizeOptionalText(input.paymentProofNote),
+        JSON.stringify({
+          cardholderName: normalizeOptionalText(input.cardholderName),
+          cardLast4: normalizeOptionalText(input.cardLast4),
+          paypalEmail: normalizeOptionalText(input.paypalEmail),
+        }),
+      ],
+    );
+
+    await client.query(
+      `UPDATE tenants
+          SET status = $2,
+              billing_cycle = $3,
+              activated_at = CASE WHEN $2 = 'active' THEN NOW() ELSE activated_at END
+        WHERE id = $1`,
+      [context.tenantId, tenantStatus, input.billingCycle],
+    );
+
+    if (isInstant) {
+      await upsertTenantSubscription(client, {
+        tenantId: context.tenantId,
+        planId: pricingRule.id,
+        billingCycle: input.billingCycle,
+        seatCount: input.seatCount,
+        totalAmountCents,
+      });
+    }
+
+    await client.query('COMMIT');
+
+    const transaction = transactionResult.rows[0];
+    await insertAuditLog({
+      tenantId: context.tenantId,
+      userId: context.ownerUserId,
+      actorType: 'tenant_user',
+      action: 'payment_submit',
+      entity: 'platform_payment',
+      entityId: transaction.id,
+      metadata: { method: input.method, status: transactionStatus, billingCycle: input.billingCycle, seatCount: input.seatCount },
+    });
+
+    return {
+      transaction: mapPlatformTransaction(transaction),
+      accountStatus: tenantStatus,
+      loginReady: isInstant,
+      nextStepMessage: isInstant ? 'Payment confirmed. Your workspace is now active.' : 'Bank transfer received. We will verify the payment within 3 business days.',
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function upsertTenantSubscription(client, { tenantId, planId, billingCycle, seatCount, totalAmountCents }) {
+  if (!planId) throw new AppError(404, 'Subscription plan is missing');
+  const now = new Date();
+  const currentEnd = new Date(now);
+  if (billingCycle === 'yearly') currentEnd.setFullYear(currentEnd.getFullYear() + 1);
+  else currentEnd.setMonth(currentEnd.getMonth() + 1);
+
+  await client.query(
+    `INSERT INTO subscriptions (
+       tenant_id, plan_id, status, billing_cycle, current_start, current_end, renews_at, seat_count, total_amount_cents
+     ) VALUES ($1, $2, 'active', $3, NOW(), $4, $4, $5, $6)
+     ON CONFLICT (tenant_id)
+     DO UPDATE SET
+       plan_id = EXCLUDED.plan_id,
+       status = 'active',
+       billing_cycle = EXCLUDED.billing_cycle,
+       current_start = NOW(),
+       current_end = EXCLUDED.current_end,
+       renews_at = EXCLUDED.renews_at,
+       seat_count = EXCLUDED.seat_count,
+       total_amount_cents = EXCLUDED.total_amount_cents`,
+    [tenantId, planId, billingCycle, currentEnd.toISOString(), seatCount, totalAmountCents],
+  );
+}
+
+async function getBackupsOverview() {
+  const [backupsResult, schedulesResult, logsResult] = await Promise.all([
+    pool.query(
+      `SELECT id, trigger_type, schedule_id, backup_kind, engine, format, status, file_name, file_size_bytes,
+              retention_days,
+              TO_CHAR(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS started_at,
+              TO_CHAR(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS completed_at,
+              error_message
+       FROM platform_backups
+       ORDER BY started_at DESC
+       LIMIT 25`,
+    ),
+    pool.query(
+      `SELECT id, frequency, hour, minute, day_of_week, day_of_month, retention_days, is_active,
+              TO_CHAR(last_run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_run_at,
+              TO_CHAR(next_run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS next_run_at
+       FROM platform_backup_schedules
+       ORDER BY created_at ASC, next_run_at ASC`,
+    ),
+    pool.query(
+      `SELECT id, backup_id, schedule_id, level, message,
+              TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+       FROM platform_backup_logs
+       ORDER BY created_at DESC
+       LIMIT 30`,
+    ),
+  ]);
+
+  const backups = backupsResult.rows.map((row) => ({
+    id: row.id,
+    triggerType: row.trigger_type,
+    scheduleId: row.schedule_id,
+    backupKind: row.backup_kind,
+    engine: row.engine,
+    format: row.format,
+    status: row.status,
+    fileName: row.file_name,
+    fileSizeBytes: Number(row.file_size_bytes || 0),
+    retentionDays: row.retention_days,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    errorMessage: row.error_message,
+    downloadPath: row.status === 'completed' ? `/admin/backups/${row.id}/download` : null,
+  }));
+
+  const schedules = schedulesResult.rows.map((row) => ({
+    id: row.id,
+    frequency: row.frequency,
+    hour: row.hour,
+    minute: row.minute,
+    dayOfWeek: row.day_of_week,
+    dayOfMonth: row.day_of_month,
+    retentionDays: row.retention_days,
+    isActive: row.is_active,
+    lastRunAt: row.last_run_at,
+    nextRunAt: row.next_run_at,
+  }));
+
+  const logs = logsResult.rows.map((row) => ({
+    id: row.id,
+    backupId: row.backup_id,
+    scheduleId: row.schedule_id,
+    level: row.level,
+    message: row.message,
+    createdAt: row.created_at,
+  }));
+
+  const latestCompleted = backups.find((item) => item.status === 'completed') || null;
+  return {
+    backups,
+    schedules,
+    logs,
+    summary: {
+      totalBackups: backups.length,
+      latestCompletedAt: latestCompleted?.completedAt || null,
+      latestCompletedSizeBytes: latestCompleted?.fileSizeBytes || 0,
+      activeSchedules: schedules.filter((item) => item.isActive).length,
+    },
+  };
+}
+
+async function createPlatformBackup({ initiatedBy = null, triggerType, scheduleId = null, payload = {} }) {
+  const parsed = backupRunSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid backup request');
+  }
+
+  if (backupJobLocks.has('backup:platform')) {
+    throw new AppError(409, 'A platform backup is already running');
+  }
+  backupJobLocks.add('backup:platform');
+
+  const retentionDays = parsed.data.retentionDays || 14;
+  let backupId = null;
+  try {
+    const inserted = await pool.query(
+      `INSERT INTO platform_backups (trigger_type, schedule_id, retention_days, created_by, status)
+       VALUES ($1, $2, $3, $4, 'running')
+       RETURNING id`,
+      [triggerType, scheduleId, retentionDays, initiatedBy],
+    );
+    backupId = inserted.rows[0].id;
+    await appendBackupLog({ backupId, scheduleId, message: 'Backup job started' });
+
+    const artifact = await buildDatabaseBackupArtifact();
+    await pool.query(
+      `UPDATE platform_backups
+          SET engine = $2,
+              format = $3,
+              status = 'completed',
+              file_name = $4,
+              storage_path = $5,
+              content_type = $6,
+              file_size_bytes = $7,
+              completed_at = NOW(),
+              error_message = NULL
+        WHERE id = $1`,
+      [backupId, artifact.engine, artifact.format, artifact.fileName, artifact.storagePath, artifact.contentType, artifact.fileSizeBytes],
+    );
+    await appendBackupLog({ backupId, scheduleId, message: `Backup completed using ${artifact.engine}` });
+    await enforceBackupRetention(retentionDays);
+    return (await getBackupsOverview()).backups.find((item) => item.id === backupId);
+  } catch (error) {
+    if (backupId) {
+      await pool.query(
+        `UPDATE platform_backups
+            SET status = 'failed',
+                completed_at = NOW(),
+                error_message = $2
+          WHERE id = $1`,
+        [backupId, error instanceof Error ? error.message : 'Backup failed'],
+      ).catch(() => {});
+      await appendBackupLog({
+        backupId,
+        scheduleId,
+        level: 'error',
+        message: error instanceof Error ? error.message : 'Backup failed',
+      });
+    }
+    throw error;
+  } finally {
+    backupJobLocks.delete('backup:platform');
+  }
+}
+
+async function deletePlatformBackup(payload) {
+  const parsed = backupDeleteSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid backup delete request');
+  }
+  const backup = await getBackupDownloadRecord(parsed.data.id);
+  if (!backup) throw new AppError(404, 'Backup not found');
+  if (backup.storagePath) {
+    await fsp.rm(backup.storagePath, { force: true }).catch(() => {});
+  }
+  await pool.query('DELETE FROM platform_backups WHERE id = $1', [parsed.data.id]);
+  return backup;
+}
+
+async function upsertBackupSchedule(userId, payload) {
+  const parsed = backupScheduleUpsertSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid backup schedule');
+  }
+  const input = parsed.data;
+  if (input.frequency === 'weekly' && (input.dayOfWeek === null || input.dayOfWeek === undefined)) {
+    throw new AppError(400, 'Weekly schedules require a day of week');
+  }
+  if (input.frequency === 'monthly' && (input.dayOfMonth === null || input.dayOfMonth === undefined)) {
+    throw new AppError(400, 'Monthly schedules require a day of month');
+  }
+  const nextRunAt = computeNextRunAt(input).toISOString();
+  let result;
+  if (input.id) {
+    result = await pool.query(
+      `UPDATE platform_backup_schedules
+          SET frequency = $2,
+              hour = $3,
+              minute = $4,
+              day_of_week = $5,
+              day_of_month = $6,
+              retention_days = $7,
+              is_active = $8,
+              next_run_at = $9::timestamptz,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, frequency, hour, minute, day_of_week, day_of_month, retention_days, is_active,
+                  TO_CHAR(last_run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_run_at,
+                  TO_CHAR(next_run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS next_run_at`,
+      [input.id, input.frequency, input.hour, input.minute, input.dayOfWeek ?? null, input.dayOfMonth ?? null, input.retentionDays, input.isActive, nextRunAt],
+    );
+    if (!result.rows[0]) throw new AppError(404, 'Backup schedule not found');
+  } else {
+    result = await pool.query(
+      `INSERT INTO platform_backup_schedules (
+         frequency, hour, minute, day_of_week, day_of_month, retention_days, is_active, next_run_at, created_by
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9)
+       RETURNING id, frequency, hour, minute, day_of_week, day_of_month, retention_days, is_active,
+                 TO_CHAR(last_run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_run_at,
+                 TO_CHAR(next_run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS next_run_at`,
+      [input.frequency, input.hour, input.minute, input.dayOfWeek ?? null, input.dayOfMonth ?? null, input.retentionDays, input.isActive, nextRunAt, userId],
+    );
+  }
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    frequency: row.frequency,
+    hour: row.hour,
+    minute: row.minute,
+    dayOfWeek: row.day_of_week,
+    dayOfMonth: row.day_of_month,
+    retentionDays: row.retention_days,
+    isActive: row.is_active,
+    lastRunAt: row.last_run_at,
+    nextRunAt: row.next_run_at,
+  };
+}
+
+async function bumpScheduleAfterRun(scheduleId) {
+  const scheduleResult = await pool.query(
+    `SELECT id, frequency, hour, minute, day_of_week, day_of_month, retention_days, is_active
+     FROM platform_backup_schedules
+     WHERE id = $1`,
+    [scheduleId],
+  );
+  const schedule = scheduleResult.rows[0];
+  if (!schedule) return;
+  const nextRunAt = computeNextRunAt({
+    frequency: schedule.frequency,
+    hour: schedule.hour,
+    minute: schedule.minute,
+    dayOfWeek: schedule.day_of_week,
+    dayOfMonth: schedule.day_of_month,
+    retentionDays: schedule.retention_days,
+    isActive: schedule.is_active,
+  }).toISOString();
+  await pool.query(
+    `UPDATE platform_backup_schedules
+        SET last_run_at = NOW(),
+            next_run_at = $2::timestamptz,
+            updated_at = NOW()
+      WHERE id = $1`,
+    [scheduleId, nextRunAt],
+  );
+}
+
+function computeNextRunAt(input) {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCSeconds(0, 0);
+  next.setUTCHours(input.hour, input.minute, 0, 0);
+
+  if (input.frequency === 'daily') {
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    return next;
+  }
+
+  if (input.frequency === 'weekly') {
+    const dayOfWeek = input.dayOfWeek ?? 0;
+    const current = next.getUTCDay();
+    let delta = dayOfWeek - current;
+    if (delta < 0 || (delta === 0 && next <= now)) delta += 7;
+    next.setUTCDate(next.getUTCDate() + delta);
+    return next;
+  }
+
+  const dayOfMonth = input.dayOfMonth ?? 1;
+  next.setUTCDate(dayOfMonth);
+  if (next <= now) next.setUTCMonth(next.getUTCMonth() + 1);
+  return next;
+}
+
+async function buildDatabaseBackupArtifact() {
+  await fsp.mkdir(backupRootDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:]/g, '-').replace(/\..+/, '');
+  const pgDumpPath = await resolvePgDumpPath();
+  if (pgDumpPath) {
+    return createPgDumpBackup(pgDumpPath, stamp);
+  }
+  return createJsonSnapshotBackup(stamp);
+}
+
+async function resolvePgDumpPath() {
+  const configured = process.env.PG_DUMP_PATH;
+  if (configured && fs.existsSync(configured)) return configured;
+  const candidates = process.platform === 'win32'
+    ? [
+        'C:\\Program Files\\PostgreSQL\\17\\bin\\pg_dump.exe',
+        'C:\\Program Files\\PostgreSQL\\16\\bin\\pg_dump.exe',
+        'C:\\Program Files\\PostgreSQL\\15\\bin\\pg_dump.exe',
+        'C:\\Program Files\\PostgreSQL\\14\\bin\\pg_dump.exe',
+      ]
+    : ['/usr/bin/pg_dump', '/usr/local/bin/pg_dump'];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function createPgDumpBackup(pgDumpPath, stamp) {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new AppError(500, 'DATABASE_URL is not configured');
+  const connection = new URL(databaseUrl);
+  const dbName = connection.pathname.replace(/^\//, '');
+  const fileName = `BMedical-db-${stamp}.dump`;
+  const storagePath = path.join(backupRootDir, fileName);
+  const args = [
+    '--format=custom',
+    '--no-owner',
+    '--no-privileges',
+    '--file', storagePath,
+    '--host', connection.hostname,
+    '--port', connection.port || '5432',
+    '--username', decodeURIComponent(connection.username),
+    dbName,
+  ];
+  await runProcess(pgDumpPath, args, {
+    ...process.env,
+    PGPASSWORD: decodeURIComponent(connection.password),
+  });
+  const stats = await fsp.stat(storagePath);
+  return {
+    engine: 'pg_dump',
+    format: 'dump',
+    fileName,
+    storagePath,
+    contentType: 'application/octet-stream',
+    fileSizeBytes: stats.size,
+  };
+}
+
+async function createJsonSnapshotBackup(stamp) {
+  const fileName = `BMedical-db-${stamp}.json.gz`;
+  const storagePath = path.join(backupRootDir, fileName);
+  const snapshot = await exportDatabaseSnapshot();
+  const payload = Buffer.from(JSON.stringify(snapshot, null, 2), 'utf8');
+  const compressed = zlib.gzipSync(payload, { level: 9 });
+  await fsp.writeFile(storagePath, compressed);
+  return {
+    engine: 'json_snapshot',
+    format: 'json.gz',
+    fileName,
+    storagePath,
+    contentType: 'application/gzip',
+    fileSizeBytes: compressed.byteLength,
+  };
+}
+
+async function exportDatabaseSnapshot() {
+  const tablesResult = await pool.query(
+    `SELECT table_name
+     FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_type = 'BASE TABLE'
+     ORDER BY table_name ASC`,
+  );
+  const tables = {};
+  for (const row of tablesResult.rows) {
+    const tableName = row.table_name;
+    const data = await pool.query(`SELECT * FROM ${escapeIdentifier(tableName)}`);
+    tables[tableName] = data.rows;
+  }
+  return {
+    exportedAt: new Date().toISOString(),
+    node: os.hostname(),
+    database: maskDatabaseName(process.env.DATABASE_URL || ''),
+    tables,
+  };
+}
+
+function escapeIdentifier(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function maskDatabaseName(databaseUrl) {
+  try {
+    const parsed = new URL(databaseUrl);
+    return parsed.pathname.replace(/^\//, '');
+  } catch {
+    return 'bmedical';
+  }
+}
+
+function runProcess(command, args, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new AppError(500, stderr.trim() || `${path.basename(command)} failed with code ${code}`));
+    });
+  });
+}
+
+async function enforceBackupRetention(retentionDays) {
+  const result = await pool.query(
+    `SELECT id
+     FROM platform_backups
+     WHERE status = 'completed'
+       AND completed_at < NOW() - ($1::text || ' days')::interval`,
+    [retentionDays],
+  );
+  for (const row of result.rows) {
+    await deletePlatformBackup({ id: row.id }).catch(() => {});
+  }
+}
+
+async function appendBackupLog({ backupId = null, scheduleId = null, level = 'info', message }) {
+  await pool.query(
+    `INSERT INTO platform_backup_logs (backup_id, schedule_id, level, message)
+     VALUES ($1, $2, $3, $4)`,
+    [backupId, scheduleId, level, message],
+  ).catch(() => {});
+}
+
+async function getBackupDownloadRecord(id) {
+  const result = await pool.query(
+    `SELECT id, file_name, storage_path, content_type, file_size_bytes, status
+     FROM platform_backups
+     WHERE id = $1`,
+    [id],
+  );
+  return result.rows[0]
+    ? {
+        id: result.rows[0].id,
+        fileName: result.rows[0].file_name,
+        storagePath: result.rows[0].storage_path,
+        contentType: result.rows[0].content_type,
+        fileSizeBytes: Number(result.rows[0].file_size_bytes || 0),
+        status: result.rows[0].status,
+      }
+    : null;
 }
 
 async function insertAuditLog({ tenantId = null, userId = null, actorType, action, entity, entityId = null, metadata = {} }) {
@@ -1667,8 +2874,177 @@ function monthToDateRange(month) {
   };
 }
 
+async function getPricingRules() {
+  const result = await pool.query(
+    `SELECT id, code, name, monthly_price_cents, yearly_price_cents, included_users,
+            extra_user_monthly_cents, extra_user_yearly_cents, summary
+     FROM subscription_plans
+     WHERE code IN ('professional', 'enterprise')
+       AND is_active = TRUE
+     ORDER BY CASE code WHEN 'professional' THEN 1 WHEN 'enterprise' THEN 2 ELSE 99 END`,
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    summary: row.summary || '',
+    monthlyPriceCents: Number(row.monthly_price_cents || 0),
+    yearlyPriceCents: Number(row.yearly_price_cents || 0),
+    monthlyPrice: centsToAmount(row.monthly_price_cents),
+    yearlyPrice: centsToAmount(row.yearly_price_cents),
+    includedUsers: Number(row.included_users || 1),
+    extraUserMonthlyCents: Number(row.extra_user_monthly_cents || 0),
+    extraUserYearlyCents: Number(row.extra_user_yearly_cents || 0),
+    extraUserMonthly: centsToAmount(row.extra_user_monthly_cents),
+    extraUserYearly: centsToAmount(row.extra_user_yearly_cents),
+  }));
+}
+
 function centsToAmount(value) {
   return Number(value || 0) / 100;
+}
+
+function mapPlatformTransaction(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    customerEmail: row.customer_email,
+    customerName: row.customer_name,
+    planCode: row.plan_code,
+    billingCycle: row.billing_cycle,
+    seatCount: Number(row.seat_count || 1),
+    totalAmount: centsToAmount(row.total_amount_cents),
+    method: row.method,
+    status: row.status,
+    createdAt: row.created_at,
+    referenceCode: row.reference_code || '',
+    bankRegion: row.bank_region || null,
+    proofNote: row.proof_note || '',
+  };
+}
+
+async function getAdminBillingOverview() {
+  const [pricingRules, pendingResult, recentResult, subscriptionsResult] = await Promise.all([
+    getPricingRules(),
+    pool.query(
+      `SELECT id, tenant_id, customer_email, customer_name, plan_code, billing_cycle, seat_count,
+              total_amount_cents, method, status, created_at, reference_code, bank_region, proof_note
+       FROM platform_payment_transactions
+       WHERE status = 'pending_manual_review'
+       ORDER BY created_at ASC`,
+    ),
+    pool.query(
+      `SELECT id, tenant_id, customer_email, customer_name, plan_code, billing_cycle, seat_count,
+              total_amount_cents, method, status, created_at, reference_code, bank_region, proof_note
+       FROM platform_payment_transactions
+       ORDER BY created_at DESC
+       LIMIT 12`,
+    ),
+    pool.query(
+      `SELECT t.id AS tenant_id,
+              t.business_name,
+              t.status,
+              t.billing_cycle,
+              COALESCE(sp.code, 'professional') AS plan_code,
+              COALESCE(s.seat_count, 1) AS seat_count,
+              COALESCE(s.total_amount_cents, 0) AS total_amount_cents
+       FROM tenants t
+       LEFT JOIN subscriptions s ON s.tenant_id = t.id
+       LEFT JOIN subscription_plans sp ON sp.id = t.current_plan_id
+       ORDER BY t.created_at DESC
+       LIMIT 30`,
+    ),
+  ]);
+
+  return {
+    pricingRules,
+    pendingManualReviews: pendingResult.rows.map(mapPlatformTransaction),
+    recentTransactions: recentResult.rows.map(mapPlatformTransaction),
+    subscriptions: subscriptionsResult.rows.map((row) => ({
+      tenantId: row.tenant_id,
+      businessName: row.business_name,
+      status: row.status,
+      billingCycle: row.billing_cycle || 'monthly',
+      planCode: row.plan_code,
+      seatCount: Number(row.seat_count || 1),
+      totalAmount: centsToAmount(row.total_amount_cents),
+    })),
+  };
+}
+
+async function reviewManualPayment(adminId, payload) {
+  const parsed = adminManualPaymentReviewSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid payment review request');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const transactionResult = await client.query(
+      `SELECT id, tenant_id, customer_email, customer_name, plan_code, billing_cycle, seat_count,
+              total_amount_cents, method, status, created_at, reference_code, bank_region, proof_note
+       FROM platform_payment_transactions
+       WHERE id = $1
+       FOR UPDATE`,
+      [parsed.data.transactionId],
+    );
+    const transaction = transactionResult.rows[0];
+    if (!transaction) throw new AppError(404, 'Payment transaction not found');
+    if (transaction.status !== 'pending_manual_review') {
+      throw new AppError(409, 'This payment has already been reviewed');
+    }
+
+    const nextStatus = parsed.data.decision === 'approve' ? 'completed' : 'rejected';
+    await client.query(
+      `UPDATE platform_payment_transactions
+          SET status = $2,
+              approved_by = $3,
+              approved_at = NOW(),
+              proof_note = COALESCE($4, proof_note),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [transaction.id, nextStatus, adminId, normalizeOptionalText(parsed.data.notes)],
+    );
+
+    if (parsed.data.decision === 'approve') {
+      const planResult = await client.query('SELECT id FROM subscription_plans WHERE code = $1 LIMIT 1', [transaction.plan_code]);
+      await upsertTenantSubscription(client, {
+        tenantId: transaction.tenant_id,
+        planId: planResult.rows[0]?.id,
+        billingCycle: transaction.billing_cycle,
+        seatCount: Number(transaction.seat_count || 1),
+        totalAmountCents: Number(transaction.total_amount_cents || 0),
+      });
+      await client.query(
+        `UPDATE tenants
+            SET status = 'active',
+                billing_cycle = $2,
+                activated_at = COALESCE(activated_at, NOW())
+          WHERE id = $1`,
+        [transaction.tenant_id, transaction.billing_cycle],
+      );
+    } else {
+      await client.query(
+        `UPDATE tenants
+            SET status = 'verified_unpaid'
+          WHERE id = $1`,
+        [transaction.tenant_id],
+      );
+    }
+
+    await client.query('COMMIT');
+    return {
+      decision: parsed.data.decision,
+      transaction: mapPlatformTransaction({ ...transaction, status: nextStatus }),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function mapInvoiceRow(row) {

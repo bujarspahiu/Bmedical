@@ -16,9 +16,23 @@ export interface AuthUser {
 }
 
 export interface RegisterData {
-  businessName: string; ownerName: string; email: string; phone: string;
-  password: string; address: string; city: string; country: string;
-  taxNumber: string; plan: PlanType; agreed: boolean;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  businessName?: string;
+  password: string;
+  plan: PlanType;
+  agreedTerms: boolean;
+}
+
+export interface RegisterResult {
+  success: boolean;
+  message?: string;
+  verificationUrl?: string;
+  verificationExpiresAt?: string;
+  email?: string;
+  tenantName?: string;
 }
 
 interface AuthContextValue {
@@ -26,7 +40,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
   adminLogin: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
-  register: (data: RegisterData) => Promise<{ success: boolean; message?: string }>;
+  register: (data: RegisterData) => Promise<RegisterResult>;
   logout: () => Promise<void>;
 }
 
@@ -37,29 +51,29 @@ const ENABLE_DEMO_ADMIN = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEM
 const demoUsers: Record<string, AuthUser> = {
   'clinic@bmedical.com': {
     id: 'demo-clinic-owner',
-    name: 'Bmedical Clinic Demo',
+    name: 'BMedical Clinic Demo',
     email: 'clinic@bmedical.com',
     role: 'owner',
     tenantId: 'tenant-clinic-demo',
-    tenantName: 'Bmedical Clinic',
+    tenantName: 'BMedical Clinic',
     plan: 'professional',
   },
   'hospital@bmedical.com': {
     id: 'demo-hospital-owner',
-    name: 'Bmedical Hospital Demo',
+    name: 'BMedical Hospital Demo',
     email: 'hospital@bmedical.com',
     role: 'owner',
     tenantId: 'tenant-hospital-demo',
-    tenantName: 'Bmedical Hospital',
+    tenantName: 'BMedical Hospital',
     plan: 'enterprise',
   },
   'ordinance@bmedical.com': {
     id: 'demo-ordinance-owner',
-    name: 'Bmedical Ordinance Demo',
+    name: 'BMedical Ordinance Demo',
     email: 'ordinance@bmedical.com',
     role: 'owner',
     tenantId: 'tenant-ordinance-demo',
-    tenantName: 'Bmedical Ordinance',
+    tenantName: 'BMedical Ordinance',
     plan: 'professional',
   },
 };
@@ -67,11 +81,11 @@ const demoUsers: Record<string, AuthUser> = {
 if (ENABLE_DEMO_ADMIN) {
   demoUsers['admin@bmedical.com'] = {
     id: 'demo-platform-admin',
-    name: 'Bmedical Super Admin',
+    name: 'BMedical Super Admin',
     email: 'admin@bmedical.com',
     role: 'owner',
     tenantId: 'platform-admin',
-    tenantName: 'Bmedical Platform',
+    tenantName: 'BMedical Platform',
     plan: 'enterprise',
     isAdmin: true,
   };
@@ -166,9 +180,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const register = async (data: RegisterData) => {
     try {
-      const r = await api<{ user: AuthUser }>('register', data as unknown as Record<string, unknown>);
-      setUser(r.user);
-      return { success: true };
+      const r = await api<{
+        verificationRequired: boolean;
+        verificationUrl?: string;
+        verificationExpiresAt?: string;
+        email?: string;
+        tenantName?: string;
+      }>('register', data as unknown as Record<string, unknown>);
+      return {
+        success: true,
+        verificationUrl: r.verificationUrl,
+        verificationExpiresAt: r.verificationExpiresAt,
+        email: r.email,
+        tenantName: r.tenantName,
+      };
     } catch (error: unknown) { return { success: false, message: getErrorMessage(error) }; }
   };
 

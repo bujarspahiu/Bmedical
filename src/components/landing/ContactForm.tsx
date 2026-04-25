@@ -9,13 +9,19 @@ import { useLanguage } from '@/contexts/LanguageContext';
 
 const ContactForm: React.FC = () => {
   const { t } = useLanguage();
-  const [form, setForm] = useState({ name: '', email: '', clinic: '', phone: '', message: '' });
+  const [form, setForm] = useState({ name: '', email: '', clinic: '', phone: '', message: '', captcha: '' });
   const [submitted, setSubmitted] = useState(false);
+  const captchaQuestion = '7 + 3 = ?';
+  const captchaAnswer = '10';
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name || !form.email || !form.message) {
       toast({ title: t.contact.missingTitle, description: t.contact.missingBody });
+      return;
+    }
+    if (form.captcha.trim() !== captchaAnswer) {
+      toast({ title: 'Captcha failed', description: 'Please solve the simple anti-spam question before sending your request.' });
       return;
     }
     setSubmitted(true);
@@ -45,7 +51,7 @@ const ContactForm: React.FC = () => {
                 </div>
                 <div className="text-2xl font-bold text-[#1F2937] mb-2">{t.contact.successTitle}</div>
                 <p className="text-slate-600">{t.contact.successBody}</p>
-                <Button onClick={() => { setSubmitted(false); setForm({ name: '', email: '', clinic: '', phone: '', message: '' }); }} variant="outline" className="mt-6">{t.contact.sendAnother}</Button>
+                <Button onClick={() => { setSubmitted(false); setForm({ name: '', email: '', clinic: '', phone: '', message: '', captcha: '' }); }} variant="outline" className="mt-6">{t.contact.sendAnother}</Button>
               </div>
             ) : (
               <form onSubmit={submit} className="space-y-4">
@@ -72,6 +78,16 @@ const ContactForm: React.FC = () => {
                 <div>
                   <Label htmlFor="m">{t.contact.help}</Label>
                   <Textarea id="m" rows={4} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} />
+                </div>
+                <div>
+                  <Label htmlFor="captcha">Anti-spam check: {captchaQuestion}</Label>
+                  <Input
+                    id="captcha"
+                    inputMode="numeric"
+                    value={form.captcha}
+                    onChange={(e) => setForm({ ...form, captcha: e.target.value.replace(/[^0-9]/g, '') })}
+                    placeholder="Type the answer"
+                  />
                 </div>
                 <Button type="submit" className="w-full h-11 bg-[#2C5F7C] hover:bg-[#234e66] text-white">{t.contact.request}</Button>
               </form>

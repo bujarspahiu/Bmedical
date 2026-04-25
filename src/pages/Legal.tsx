@@ -8,7 +8,22 @@ const Legal: React.FC = () => {
   const { doc } = useParams();
   const { t } = useLanguage();
   const docs = t.legal.docs as Record<string, { title: string; sections: string[][] }>;
-  const content = docs[doc || 'terms'];
+  const fallbackDoc = doc || 'terms';
+  const content = fallbackDoc === 'terms'
+    ? {
+        title: 'Kushtet e Sherbimit',
+        sections: [
+          ['1. Pranimi i kushteve', 'Duke perdorur platformen, pajtoheni me keto Kushte te Sherbimit. Sherbimi operohet nga BMedical.'],
+          ['2. Abonimi dhe faturimi', 'Sherbimi ofrohet me abonim. Plani Professional faturohet 20 EUR ne muaj ose 200 EUR ne vit. Plani Enterprise faturohet 50 EUR ne muaj ose 500 EUR ne vit. Cdo plan perfshin 1 user dhe user-et shtese tarifohen sipas planit aktiv.'],
+          ['3. Demo dhe vendimi i blerjes', 'Klienti ka mundesi te shohe live demo para blerjes. Duke vazhduar me regjistrimin dhe pagesen, klienti pranon se e ka vleresuar sherbimin ne masen e nevojshme per vendimin e abonimit.'],
+          ['4. Rimbursimet', 'Pas aktivizimit te llogarise, abonimet konsiderohen pergjithesisht pa rimbursim, pervec rasteve kur ligji ne fuqi kerkon ndryshe. Pagesat me bank transfer nuk konsiderohen aktivizim derisa te verifikohen nga administratori i platformes.'],
+          ['5. Te dhenat e tenant-it', 'Te dhenat qe ngarkoni mbeten prona juaj. Platforma vepron si perpunues i te dhenave sipas GDPR.'],
+          ['6. Perdorimi i lejueshem', 'Nuk lejohet keqperdorimi i sherbimit, shkelja e sigurise, mashtrimi, pagesa e rreme ose ruajtja e permbajtjes se paligjshme.'],
+          ['7. Kufizimi i pergjegjesise', 'BMedical nuk mban pergjegjesi per deme indirekte apo pasoja nga perdorimi i sherbimit ne masen e lejuar nga ligji.'],
+          ['8. Nderprerja dhe pezullimi', 'Platforma mund te pezulloje ose kufizoje llogari ne rast mospagese, mashtrimi, abuzimi ose shkeljeje te ketyre kushteve.'],
+        ],
+      }
+    : docs[fallbackDoc];
 
   if (!content) return <div>{t.legal.notFound}</div>;
 

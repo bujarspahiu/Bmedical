@@ -252,7 +252,7 @@ const translations: any = {
       creating: 'Duke krijuar...',
       haveAccount: 'Ke tashme llogari?',
       signIn: 'Hyr',
-      successTitle: 'Mire se erdhe ne Bmedical',
+      successTitle: 'Mire se erdhe ne BMedical',
       successBody: 'Hapesira jote u krijua me sukses.',
       errorTitle: 'Regjistrimi deshtoi',
     },
@@ -279,19 +279,19 @@ const translations: any = {
         terms: {
           title: 'Kushtet e Sherbimit',
           sections: [
-            ['1. Pranimi i kushteve', 'Duke perdorur platformen, pajtoheni me keto Kushte te Sherbimit. Sherbimi operohet nga Bmedical.'],
+            ['1. Pranimi i kushteve', 'Duke perdorur platformen, pajtoheni me keto Kushte te Sherbimit. Sherbimi operohet nga BMedical.'],
             ['2. Abonimi dhe faturimi', 'Sherbimi ofrohet me abonim. Plani Professional faturohet €50 ne muaj, ndersa Enterprise me cmim te personalizuar sipas procesit te onboardimit.'],
             ['3. Prova falas', 'Klientet e rinj perfitojne prove falas 14-ditore. Nuk kerkohet karte krediti.'],
             ['4. Te dhenat e tenant-it', 'Te dhenat qe ngarkoni mbeten prona juaj. Platforma vepron si perpunues i te dhenave sipas GDPR.'],
             ['5. Perdorimi i lejueshem', 'Nuk lejohet keqperdorimi i sherbimit, shkelja e sigurise apo ruajtja e permbajtjes se paligjshme.'],
-            ['6. Kufizimi i pergjegjesise', 'Bmedical nuk mban pergjegjesi per deme indirekte apo pasoja nga perdorimi i sherbimit.'],
+            ['6. Kufizimi i pergjegjesise', 'BMedical nuk mban pergjegjesi per deme indirekte apo pasoja nga perdorimi i sherbimit.'],
             ['7. Nderprerja', 'Mund ta anuloni abonimin ne cdo kohe. Pas nderprerjes, keni 30 dite kohe per eksport te te dhenave.'],
           ],
         },
         privacy: {
           title: 'Politika e Privatesise',
           sections: [
-            ['1. Kontrolluesi i te dhenave', 'Bmedical eshte kontrolluesi i te dhenave per informacionin e llogarise dhe faturimit.'],
+            ['1. Kontrolluesi i te dhenave', 'BMedical eshte kontrolluesi i te dhenave per informacionin e llogarise dhe faturimit.'],
             ['2. Te dhenat qe mbledhim', 'Informacion llogarie, te dhena faturimi, komunikime me support dhe analiza perdorimi.'],
             ['3. Pajtueshmeria me GDPR', 'Jemi ne perputhje me GDPR dhe ruajme te dhenat ne qendra te dhenash brenda BE-se.'],
             ['4. Siguria e te dhenave', 'Te gjitha te dhenat enkriptohen ne tranzit dhe ne pushim. Izolimi i tenant-eve zbatohet ne PostgreSQL.'],
@@ -394,7 +394,7 @@ translations.en = {
     ],
   },
   modules: {
-    eyebrow: 'Why Bmedical',
+      eyebrow: 'Why BMedical',
     title: 'Purpose-built for rehabilitation, not a generic EHR',
     description: 'Most medical software treats physiotherapy as an afterthought. Every screen, form and workflow here is designed for real rehabilitation teams.',
     reasons: [
@@ -458,7 +458,7 @@ translations.en = {
     eyebrow: 'Loved by clinics',
     title: 'Trusted across Europe',
     items: [
-      'Bmedical cut our reception workload in half. The waiting-room board alone is worth the subscription.',
+        'BMedical cut our reception workload in half. The waiting-room board alone is worth the subscription.',
       'We manage thousands of patients across multiple locations on a single platform. Reports alone save us weeks of manual work.',
       'Every clinical workflow feels thought through. Structured anamnesis, diagnoses and treatment plans feel built by physios for physios.',
     ],
@@ -534,7 +534,7 @@ translations.en = {
     creating: 'Creating workspace...',
     haveAccount: 'Already have an account?',
     signIn: 'Sign in',
-    successTitle: 'Welcome to Bmedical',
+      successTitle: 'Welcome to BMedical',
     successBody: 'Your workspace has been created.',
     errorTitle: 'Registration failed',
   },
@@ -561,19 +561,19 @@ translations.en = {
       terms: {
         title: 'Terms of Service',
         sections: [
-          ['1. Acceptance of Terms', 'By using the platform, you agree to these Terms of Service. The service is operated by Bmedical.'],
+            ['1. Acceptance of Terms', 'By using the platform, you agree to these Terms of Service. The service is operated by BMedical.'],
           ['2. Subscription & Billing', 'The service is provided on a subscription basis. The Professional plan is billed at €50 per month, while Enterprise is custom-priced during onboarding.'],
           ['3. Free Trial', 'New customers receive a 14-day free trial and no credit card is required.'],
           ['4. Tenant Data', 'All tenant data remains your property. The platform acts as a data processor under GDPR.'],
           ['5. Acceptable Use', 'You may not misuse the service, attempt to breach security or store unlawful content.'],
-          ['6. Limitation of Liability', 'Bmedical is not liable for indirect or consequential damages arising from the use of the service.'],
+            ['6. Limitation of Liability', 'BMedical is not liable for indirect or consequential damages arising from the use of the service.'],
           ['7. Termination', 'You may cancel your subscription at any time. After termination, you have 30 days to export your data.'],
         ],
       },
       privacy: {
         title: 'Privacy Policy',
         sections: [
-          ['1. Data Controller', 'Bmedical is the data controller for account and billing information.'],
+            ['1. Data Controller', 'BMedical is the data controller for account and billing information.'],
           ['2. Data We Collect', 'We collect account information, billing data, support communications and product usage analytics.'],
           ['3. GDPR Compliance', 'We comply with GDPR and store data in EU-based data centers.'],
           ['4. Data Security', 'All data is encrypted in transit and at rest. Tenant isolation is enforced at the PostgreSQL level.'],
@@ -760,7 +760,7 @@ translations.sr = {
     creating: 'Kreiranje...',
     haveAccount: 'Vec imate nalog?',
     signIn: 'Prijavite se',
-    successTitle: 'Dobrodosli u Bmedical',
+      successTitle: 'Dobrodosli u BMedical',
     successBody: 'Vas workspace je kreiran.',
     errorTitle: 'Registracija neuspesna',
   },
