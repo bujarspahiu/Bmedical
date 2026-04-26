@@ -281,6 +281,8 @@ const signupRegisterSchema = z.object({
   businessName: z.string().trim().max(180).optional().nullable(),
   password: z.string().trim().min(6, 'Password must be at least 6 characters').max(120),
   plan: planCodeSchema,
+  billingCycle: billingCycleSchema.optional(),
+  seatCount: z.coerce.number().int().min(1).max(250).optional(),
   agreedTerms: z.boolean().refine((value) => value === true, 'You must accept the terms to continue'),
 });
 
@@ -304,6 +306,26 @@ const adminManualPaymentReviewSchema = z.object({
   transactionId: z.string().uuid('Invalid transaction id'),
   decision: z.enum(['approve', 'reject']),
   notes: z.string().trim().max(2000).optional().nullable(),
+});
+
+const adminPaymentSettingsSchema = z.object({
+  bankKosovoProvider: z.string().trim().min(1).max(120),
+  bankKosovoBeneficiary: z.string().trim().min(1).max(180),
+  bankKosovoIban: z.string().trim().min(1).max(120),
+  bankKosovoBic: z.string().trim().min(1).max(120),
+  bankSepaProvider: z.string().trim().min(1).max(120),
+  bankSepaBeneficiary: z.string().trim().min(1).max(180),
+  bankSepaIban: z.string().trim().min(1).max(120),
+  bankSepaBic: z.string().trim().min(1).max(120),
+  bankReferencePrefix: z.string().trim().min(1).max(30),
+  cardLabel: z.string().trim().min(1).max(120),
+  cardHelpText: z.string().trim().min(1).max(1000),
+  cardIsEnabled: z.boolean(),
+  cardIsComingSoon: z.boolean(),
+  paypalLabel: z.string().trim().min(1).max(120),
+  paypalHelpText: z.string().trim().min(1).max(1000),
+  paypalIsEnabled: z.boolean(),
+  paypalIsComingSoon: z.boolean(),
 });
 
 const defaultServices = [
@@ -684,6 +706,12 @@ app.post('/api/physio', async (req, res) => {
         await insertAuditLog({ userId: session.sub, actorType: 'platform_admin', action: 'review', entity: 'platform_payment', entityId: result.transaction.id, metadata: { decision: result.decision, tenantId: result.transaction.tenantId } });
         return res.json(result);
       }
+      case 'admin_payment_settings_update': {
+        const session = await requireAdminSession(req);
+        const settings = await updateAdminPaymentSettings(payload);
+        await insertAuditLog({ userId: session.sub, actorType: 'platform_admin', action: 'update', entity: 'platform_payment_settings', entityId: 'global', metadata: { updated: true } });
+        return res.json({ settings });
+      }
       default:
         return res.status(400).json({ error: 'Unsupported action' });
     }
@@ -992,6 +1020,8 @@ async function registerTenant(payload) {
       email,
       ownerName,
       planCode,
+      billingCycle: input.billingCycle || 'monthly',
+      seatCount: input.seatCount || 1,
     });
 
     await client.query(
@@ -1125,6 +1155,13 @@ async function ensureCommerceInfrastructure() {
       seat_count INTEGER NOT NULL DEFAULT 1,
       total_amount_cents INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_payment_settings (
+      setting_key TEXT PRIMARY KEY,
+      setting_value TEXT NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
@@ -1353,7 +1390,7 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-async function createSignupVerification(client, { tenantId, email, ownerName, planCode }) {
+async function createSignupVerification(client, { tenantId, email, ownerName, planCode, billingCycle, seatCount }) {
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const token = signToken({
     type: 'signup_verification',
@@ -1366,7 +1403,7 @@ async function createSignupVerification(client, { tenantId, email, ownerName, pl
   await client.query(
     `INSERT INTO signup_verifications (tenant_id, email, token_hash, purpose, expires_at, metadata)
      VALUES ($1, $2, $3, 'signup_verification', $4, $5::jsonb)`,
-    [tenantId, email, tokenHash, expiresAt.toISOString(), JSON.stringify({ ownerName, planCode })],
+    [tenantId, email, tokenHash, expiresAt.toISOString(), JSON.stringify({ ownerName, planCode, billingCycle, seatCount })],
   );
 
   return {
@@ -1391,7 +1428,7 @@ async function loadSignupContext(token, { allowPendingVerification = false } = {
 
   const tokenHash = hashOpaqueToken(parsed.data.token);
   const verificationResult = await pool.query(
-    `SELECT sv.id, sv.tenant_id, sv.email, sv.expires_at, sv.verified_at,
+    `SELECT sv.id, sv.tenant_id, sv.email, sv.expires_at, sv.verified_at, sv.metadata,
             t.business_name, t.owner_name, t.phone, t.status,
             COALESCE(sp.code, 'professional') AS plan_code,
             COALESCE(sp.name, 'Professional') AS plan_name,
@@ -1431,6 +1468,8 @@ async function loadSignupContext(token, { allowPendingVerification = false } = {
     planName: context.plan_name || 'Professional',
     ownerUserId: context.owner_user_id || null,
     verifiedAt: context.verified_at,
+    initialBillingCycle: context.metadata?.billingCycle || 'monthly',
+    initialSeatCount: Number(context.metadata?.seatCount || 1),
   };
 }
 
@@ -1469,6 +1508,7 @@ async function getSignupCheckout(payload) {
   const context = await loadSignupContext(payload.token, { allowPendingVerification: false });
   const pricingRules = await getPricingRules();
   const selectedRule = pricingRules.find((rule) => rule.code === context.planCode) || pricingRules[0] || null;
+  const paymentSettings = await getAdminPaymentSettings();
 
   return {
     token: context.token,
@@ -1483,21 +1523,33 @@ async function getSignupCheckout(payload) {
     },
     selectedPlan: selectedRule,
     pricingRules,
-    bankDetails: buildBankDetails(context.tenantId),
+    initialBillingCycle: context.initialBillingCycle,
+    initialSeatCount: context.initialSeatCount,
+    bankDetails: buildBankDetails(context.tenantId, paymentSettings),
   };
 }
 
-function buildBankDetails(tenantId) {
+function buildBankDetails(tenantId, paymentSettings) {
   const reference = `BMD-${String(tenantId).slice(0, 8).toUpperCase()}`;
   return {
     kosovo: {
-      ...defaultBankDetails.kosovo,
+      region: 'Kosovo',
+      provider: paymentSettings.bankKosovoProvider,
+      beneficiary: paymentSettings.bankKosovoBeneficiary,
+      iban: paymentSettings.bankKosovoIban,
+      bic: paymentSettings.bankKosovoBic,
+      referencePrefix: paymentSettings.bankReferencePrefix,
       reference,
       paymentDescription: `BMedical subscription - ${reference}`,
       verificationWindow: 'Up to 3 business days',
     },
     sepa: {
-      ...defaultBankDetails.sepa,
+      region: 'International / SEPA Zone',
+      provider: paymentSettings.bankSepaProvider,
+      beneficiary: paymentSettings.bankSepaBeneficiary,
+      iban: paymentSettings.bankSepaIban,
+      bic: paymentSettings.bankSepaBic,
+      referencePrefix: paymentSettings.bankReferencePrefix,
       reference,
       paymentDescription: `BMedical subscription - ${reference}`,
       verificationWindow: 'Up to 3 business days',
@@ -2905,6 +2957,71 @@ function centsToAmount(value) {
   return Number(value || 0) / 100;
 }
 
+function defaultPaymentSettings() {
+  return {
+    bankKosovoProvider: defaultBankDetails.kosovo.provider,
+    bankKosovoBeneficiary: defaultBankDetails.kosovo.beneficiary,
+    bankKosovoIban: defaultBankDetails.kosovo.iban,
+    bankKosovoBic: defaultBankDetails.kosovo.bic,
+    bankSepaProvider: defaultBankDetails.sepa.provider,
+    bankSepaBeneficiary: defaultBankDetails.sepa.beneficiary,
+    bankSepaIban: defaultBankDetails.sepa.iban,
+    bankSepaBic: defaultBankDetails.sepa.bic,
+    bankReferencePrefix: defaultBankDetails.kosovo.referencePrefix,
+    cardLabel: 'Credit Card Payment',
+    cardHelpText: 'Coming Soon. The future card flow will stay inside the same checkout experience.',
+    cardIsEnabled: false,
+    cardIsComingSoon: true,
+    paypalLabel: 'PayPal',
+    paypalHelpText: 'Coming Soon. PayPal will also stay inside the same checkout page experience.',
+    paypalIsEnabled: false,
+    paypalIsComingSoon: true,
+  };
+}
+
+async function getAdminPaymentSettings() {
+  const defaults = defaultPaymentSettings();
+  const result = await pool.query(`SELECT setting_key, setting_value FROM platform_payment_settings`);
+  const settings = { ...defaults };
+  for (const row of result.rows) {
+    if (!(row.setting_key in settings)) continue;
+    if (row.setting_key.endsWith('IsEnabled') || row.setting_key.endsWith('IsComingSoon')) {
+      settings[row.setting_key] = row.setting_value === 'true';
+    } else {
+      settings[row.setting_key] = row.setting_value;
+    }
+  }
+  return settings;
+}
+
+async function updateAdminPaymentSettings(payload) {
+  const parsed = adminPaymentSettingsSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.issues[0]?.message || 'Invalid payment settings');
+  }
+  const entries = Object.entries(parsed.data);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const [key, value] of entries) {
+      await client.query(
+        `INSERT INTO platform_payment_settings (setting_key, setting_value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (setting_key)
+         DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = NOW()`,
+        [key, String(value)],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+  return getAdminPaymentSettings();
+}
+
 function mapPlatformTransaction(row) {
   return {
     id: row.id,
@@ -2925,8 +3042,9 @@ function mapPlatformTransaction(row) {
 }
 
 async function getAdminBillingOverview() {
-  const [pricingRules, pendingResult, recentResult, subscriptionsResult] = await Promise.all([
+  const [pricingRules, paymentSettings, pendingResult, recentResult, subscriptionsResult] = await Promise.all([
     getPricingRules(),
+    getAdminPaymentSettings(),
     pool.query(
       `SELECT id, tenant_id, customer_email, customer_name, plan_code, billing_cycle, seat_count,
               total_amount_cents, method, status, created_at, reference_code, bank_region, proof_note
@@ -2959,6 +3077,7 @@ async function getAdminBillingOverview() {
 
   return {
     pricingRules,
+    paymentSettings,
     pendingManualReviews: pendingResult.rows.map(mapPlatformTransaction),
     recentTransactions: recentResult.rows.map(mapPlatformTransaction),
     subscriptions: subscriptionsResult.rows.map((row) => ({

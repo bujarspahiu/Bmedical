@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -157,9 +157,50 @@ type BillingSubscription = {
 
 type BillingOverview = {
   pricingRules: PricingRule[];
+  paymentSettings: PaymentSettings;
   pendingManualReviews: PaymentTransaction[];
   recentTransactions: PaymentTransaction[];
   subscriptions: BillingSubscription[];
+};
+
+type PaymentSettings = {
+  bankKosovoProvider: string;
+  bankKosovoBeneficiary: string;
+  bankKosovoIban: string;
+  bankKosovoBic: string;
+  bankSepaProvider: string;
+  bankSepaBeneficiary: string;
+  bankSepaIban: string;
+  bankSepaBic: string;
+  bankReferencePrefix: string;
+  cardLabel: string;
+  cardHelpText: string;
+  cardIsEnabled: boolean;
+  cardIsComingSoon: boolean;
+  paypalLabel: string;
+  paypalHelpText: string;
+  paypalIsEnabled: boolean;
+  paypalIsComingSoon: boolean;
+};
+
+const defaultPaymentSettings: PaymentSettings = {
+  bankKosovoProvider: 'Paysera',
+  bankKosovoBeneficiary: 'BMedical',
+  bankKosovoIban: '',
+  bankKosovoBic: '',
+  bankSepaProvider: 'Paysera',
+  bankSepaBeneficiary: 'BMedical',
+  bankSepaIban: '',
+  bankSepaBic: '',
+  bankReferencePrefix: 'BMD',
+  cardLabel: 'Credit Card Payment',
+  cardHelpText: 'Coming Soon. The future card flow will stay inside the same checkout experience.',
+  cardIsEnabled: false,
+  cardIsComingSoon: true,
+  paypalLabel: 'PayPal',
+  paypalHelpText: 'Coming Soon. PayPal will also stay inside the same checkout page experience.',
+  paypalIsEnabled: false,
+  paypalIsComingSoon: true,
 };
 
 const defaultScheduleForm: BackupScheduleForm = {
@@ -179,6 +220,7 @@ const AdminDashboard: React.FC = () => {
   const [q, setQ] = useState('');
   const [activeTab, setActiveTab] = useState<'tenants' | 'backups' | 'billing'>('tenants');
   const [scheduleForm, setScheduleForm] = useState<BackupScheduleForm>(defaultScheduleForm);
+  const [paymentSettingsForm, setPaymentSettingsForm] = useState<PaymentSettings>(defaultPaymentSettings);
   const isDemoAdminEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_ADMIN === 'true';
   const isDemoAdmin = isDemoAdminEnabled && user?.id === 'demo-platform-admin';
   const [demoRows, setDemoRows] = useState<AdminTenant[]>(demoTenants.map((tenant) => ({ ...tenant })));
@@ -264,6 +306,15 @@ const AdminDashboard: React.FC = () => {
     onError: (error: Error) => toast({ title: 'Could not review payment', description: error.message }),
   });
 
+  const paymentSettingsMutation = useMutation({
+    mutationFn: async (payload: PaymentSettings) => api<{ settings: PaymentSettings }>('admin_payment_settings_update', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-billing'] });
+      toast({ title: 'Payment settings updated', description: 'Checkout and admin billing now use the new payment details.' });
+    },
+    onError: (error: Error) => toast({ title: 'Could not update payment settings', description: error.message }),
+  });
+
   if (!user?.isAdmin) {
     return <Navigate to="/Adminstaff" replace />;
   }
@@ -292,11 +343,18 @@ const AdminDashboard: React.FC = () => {
   const billingOverview = isDemoAdmin
     ? ({
         pricingRules: [],
+        paymentSettings: defaultPaymentSettings,
         pendingManualReviews: [],
         recentTransactions: [],
         subscriptions: [],
       } satisfies BillingOverview)
     : billingQuery.data;
+
+  useEffect(() => {
+    if (billingOverview?.paymentSettings) {
+      setPaymentSettingsForm(billingOverview.paymentSettings);
+    }
+  }, [billingOverview?.paymentSettings]);
 
   const toggleStatus = async (tenant: AdminTenant) => {
     const nextStatus = tenant.status === 'active' ? 'suspended' : 'active';
@@ -731,6 +789,49 @@ const AdminDashboard: React.FC = () => {
                           </div>
                         </div>
                       ))}
+                    </div>
+
+                    <div className="mt-4 rounded-2xl border border-slate-200 p-4">
+                      <div className="mb-4 font-semibold text-slate-900">Payment methods and bank details</div>
+                      <div className="grid gap-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+                            <div className="font-medium text-slate-900">Kosovo bank transfer</div>
+                            <div><Label>Provider</Label><Input className="mt-1" value={paymentSettingsForm.bankKosovoProvider} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankKosovoProvider: e.target.value }))} /></div>
+                            <div><Label>Beneficiary</Label><Input className="mt-1" value={paymentSettingsForm.bankKosovoBeneficiary} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankKosovoBeneficiary: e.target.value }))} /></div>
+                            <div><Label>IBAN</Label><Input className="mt-1" value={paymentSettingsForm.bankKosovoIban} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankKosovoIban: e.target.value }))} /></div>
+                            <div><Label>SWIFT / BIC</Label><Input className="mt-1" value={paymentSettingsForm.bankKosovoBic} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankKosovoBic: e.target.value }))} /></div>
+                          </div>
+                          <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+                            <div className="font-medium text-slate-900">SEPA bank transfer</div>
+                            <div><Label>Provider</Label><Input className="mt-1" value={paymentSettingsForm.bankSepaProvider} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankSepaProvider: e.target.value }))} /></div>
+                            <div><Label>Beneficiary</Label><Input className="mt-1" value={paymentSettingsForm.bankSepaBeneficiary} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankSepaBeneficiary: e.target.value }))} /></div>
+                            <div><Label>IBAN</Label><Input className="mt-1" value={paymentSettingsForm.bankSepaIban} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankSepaIban: e.target.value }))} /></div>
+                            <div><Label>SWIFT / BIC</Label><Input className="mt-1" value={paymentSettingsForm.bankSepaBic} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankSepaBic: e.target.value }))} /></div>
+                          </div>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+                            <div className="font-medium text-slate-900">Shared reference</div>
+                            <div><Label>Reference prefix</Label><Input className="mt-1" value={paymentSettingsForm.bankReferencePrefix} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, bankReferencePrefix: e.target.value }))} /></div>
+                          </div>
+                          <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+                            <div className="font-medium text-slate-900">Credit Card</div>
+                            <div><Label>Label</Label><Input className="mt-1" value={paymentSettingsForm.cardLabel} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, cardLabel: e.target.value }))} /></div>
+                            <div><Label>Help text</Label><Input className="mt-1" value={paymentSettingsForm.cardHelpText} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, cardHelpText: e.target.value }))} /></div>
+                          </div>
+                          <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+                            <div className="font-medium text-slate-900">PayPal</div>
+                            <div><Label>Label</Label><Input className="mt-1" value={paymentSettingsForm.paypalLabel} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, paypalLabel: e.target.value }))} /></div>
+                            <div><Label>Help text</Label><Input className="mt-1" value={paymentSettingsForm.paypalHelpText} onChange={(e) => setPaymentSettingsForm((current) => ({ ...current, paypalHelpText: e.target.value }))} /></div>
+                          </div>
+                        </div>
+                        <div className="flex justify-end">
+                          <Button className="bg-[#2C5F7C]" disabled={paymentSettingsMutation.isPending} onClick={() => void paymentSettingsMutation.mutateAsync(paymentSettingsForm)}>
+                            {paymentSettingsMutation.isPending ? 'Saving...' : 'Save payment settings'}
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   </div>
 

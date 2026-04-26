@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 
 export type AppLanguage = 'sq' | 'en' | 'sr';
 
-const LANGUAGE_STORAGE_KEY = 'bmedical_language';
+const LANGUAGE_STORAGE_KEY = 'bmedical_language_v2';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const translations: any = {
@@ -789,7 +789,7 @@ type LanguageContextValue = {
 const LanguageContext = createContext<LanguageContextValue | undefined>(undefined);
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [language, setLanguage] = useState<AppLanguage>('sq');
+  const [language, setLanguage] = useState<AppLanguage>('en');
 
   useEffect(() => {
     try {

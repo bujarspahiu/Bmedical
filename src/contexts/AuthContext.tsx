@@ -23,6 +23,8 @@ export interface RegisterData {
   businessName?: string;
   password: string;
   plan: PlanType;
+  billingCycle?: 'monthly' | 'yearly';
+  seatCount?: number;
   agreedTerms: boolean;
 }
 

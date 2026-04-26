@@ -1,14 +1,39 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check, MailCheck, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, MailCheck, Minus, Plus, ShieldCheck, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { PlanType, useAuth, RegisterData } from '@/contexts/AuthContext';
-import { toast } from '@/components/ui/use-toast';
-import LanguageSwitcher from '@/components/LanguageSwitcher';
 import Brand from '@/components/Brand';
+import LanguageSwitcher from '@/components/LanguageSwitcher';
+import { PlanType, RegisterData, useAuth } from '@/contexts/AuthContext';
+import { toast } from '@/components/ui/use-toast';
+
+const planCards = [
+  {
+    code: 'professional' as const,
+    name: 'Professional',
+    subtitle: 'Clinic / Ordinance',
+    monthlyLabel: 'EUR 20 / month',
+    yearlyLabel: 'EUR 200 / year',
+    monthlyValue: 20,
+    yearlyValue: 200,
+    extraMonthlyValue: 20,
+    extraYearlyValue: 200,
+  },
+  {
+    code: 'enterprise' as const,
+    name: 'Enterprise',
+    subtitle: 'Hospital / Multi-location',
+    monthlyLabel: 'EUR 50 / month',
+    yearlyLabel: 'EUR 500 / year',
+    monthlyValue: 50,
+    yearlyValue: 500,
+    extraMonthlyValue: 50,
+    extraYearlyValue: 500,
+  },
+];
 
 const Register: React.FC = () => {
   const [params] = useSearchParams();
@@ -18,6 +43,13 @@ const Register: React.FC = () => {
   const [registrationSubmitted, setRegistrationSubmitted] = useState(false);
   const [verificationUrl, setVerificationUrl] = useState('');
   const [registeredEmail, setRegisteredEmail] = useState('');
+
+  const initialBilling = params.get('billing') === 'yearly' ? 'yearly' : 'monthly';
+  const initialSeats = Math.max(1, Number(params.get('users') || 1) || 1);
+  const initialPlan = (params.get('plan') === 'enterprise' ? 'enterprise' : 'professional') as PlanType;
+
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>(initialBilling);
+  const [seatCount, setSeatCount] = useState(initialSeats);
   const [form, setForm] = useState<RegisterData>({
     firstName: '',
     lastName: '',
@@ -25,33 +57,38 @@ const Register: React.FC = () => {
     phone: '',
     businessName: '',
     password: '',
-    plan: (params.get('plan') === 'enterprise' ? 'enterprise' : 'professional') as PlanType,
+    plan: initialPlan,
+    billingCycle: initialBilling,
+    seatCount: initialSeats,
     agreedTerms: false,
   });
 
-  const planCards = useMemo(
-    () => [
-      {
-        code: 'professional' as const,
-        name: 'Professional',
-        subtitle: 'Clinic / Ordinance',
-        monthly: 'EUR 20 / month',
-        yearly: 'EUR 200 / year',
-        extra: '+ EUR 20 per extra user / month',
-      },
-      {
-        code: 'enterprise' as const,
-        name: 'Enterprise',
-        subtitle: 'Hospital / Multi-location',
-        monthly: 'EUR 50 / month',
-        yearly: 'EUR 500 / year',
-        extra: '+ EUR 50 per extra user / month',
-      },
-    ],
-    [],
+  const activePlan = useMemo(
+    () => planCards.find((plan) => plan.code === form.plan) ?? planCards[0],
+    [form.plan],
   );
+  const pricingSummary = useMemo(() => {
+    const base = billingCycle === 'yearly' ? activePlan.yearlyValue : activePlan.monthlyValue;
+    const extraUsers = Math.max(0, seatCount - 1);
+    const extraUnit = billingCycle === 'yearly' ? activePlan.extraYearlyValue : activePlan.extraMonthlyValue;
+    return {
+      base,
+      extraUsers,
+      extraUnit,
+      total: base + extraUsers * extraUnit,
+    };
+  }, [activePlan, billingCycle, seatCount]);
 
   const update = <K extends keyof RegisterData>(key: K, value: RegisterData[K]) => setForm((current) => ({ ...current, [key]: value }));
+  const updateSeatCount = (next: number) => {
+    const normalized = Math.max(1, next);
+    setSeatCount(normalized);
+    update('seatCount', normalized);
+  };
+  const updateBillingCycle = (next: 'monthly' | 'yearly') => {
+    setBillingCycle(next);
+    update('billingCycle', next);
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,21 +129,28 @@ const Register: React.FC = () => {
               <h1 className="text-3xl font-bold text-slate-900">Verify your email to continue</h1>
               <p className="mt-3 text-sm leading-6 text-slate-600">
                 We prepared your workspace for <span className="font-medium text-slate-900">{registeredEmail}</span>.
-                {' '}Once the email is verified, the client goes straight to the payment page and stays in the same calm checkout flow.
+                {' '}After verification, the customer goes directly to the payment page.
               </p>
+
+              <div className="mt-8 rounded-3xl border border-slate-200 bg-slate-50 p-6 text-left">
+                <div className="text-sm font-semibold text-slate-900">Selected setup</div>
+                <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                  <div className="flex justify-between gap-6"><span>Plan</span><span className="font-medium text-slate-900">{activePlan.name}</span></div>
+                  <div className="flex justify-between gap-6"><span>Billing</span><span className="font-medium text-slate-900">{billingCycle === 'yearly' ? 'Yearly' : 'Monthly'}</span></div>
+                  <div className="flex justify-between gap-6"><span>Users</span><span className="font-medium text-slate-900">{seatCount}</span></div>
+                  <div className="flex justify-between gap-6"><span>Total</span><span className="font-semibold text-slate-900">EUR {pricingSummary.total.toFixed(2)}</span></div>
+                </div>
+              </div>
 
               {canUseLocalShortcut ? (
                 <div className="mt-8 rounded-3xl border border-slate-200 bg-slate-50 p-6 text-left">
                   <div className="text-sm font-semibold text-slate-900">Local testing shortcut</div>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Development mode can still open the verification link directly when you are testing locally.
+                    Development mode can still open the verification link directly while you test locally.
                   </p>
                   <div className="mt-4 flex flex-wrap gap-3">
                     <Button className="rounded-xl bg-[#2C5F7C] hover:bg-[#234e66]" onClick={() => navigate(`/verify-email?token=${encodeURIComponent(new URL(verificationUrl).searchParams.get('token') || '')}`)}>
                       Open verification
-                    </Button>
-                    <Button variant="outline" className="rounded-xl" onClick={() => window.open(verificationUrl, '_blank', 'noopener,noreferrer')}>
-                      Open raw link
                     </Button>
                   </div>
                 </div>
@@ -118,13 +162,6 @@ const Register: React.FC = () => {
                   </p>
                 </div>
               )}
-
-              <div className="mt-8 text-sm text-slate-500">
-                Need to start over?{' '}
-                <Link to="/register" className="font-medium text-[#2C5F7C]">
-                  Create a different workspace
-                </Link>
-              </div>
             </div>
           </div>
         </div>
@@ -147,16 +184,14 @@ const Register: React.FC = () => {
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.12),_transparent_28%)]" />
             <div className="relative z-10 flex h-full flex-col">
               <Brand theme="dark" compact showTagline className="mb-8" />
-
               <div className="mb-5 inline-flex w-fit items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium text-white/90 backdrop-blur">
                 <Sparkles className="h-3.5 w-3.5" />
                 Calm onboarding for non-technical teams
               </div>
-
               <div className="max-w-md">
                 <h1 className="text-3xl font-bold leading-tight lg:text-5xl">Create your workspace without friction</h1>
                 <p className="mt-4 text-base leading-7 text-white/82 lg:text-lg">
-                  Ask only for the essentials now. Email verification comes next, then the customer stays inside one checkout page with simple payment choices.
+                  The customer already knows the plan, billing cycle and user count before registering. This step only captures the essentials.
                 </p>
               </div>
 
@@ -165,7 +200,7 @@ const Register: React.FC = () => {
                   'Only the key details needed to create the workspace',
                   'Verify email first, then continue to payment',
                   'Checkout stays inside BMedical without confusing redirects',
-                  'Professional and Enterprise plans include 1 user by default',
+                  'Billing and user totals are already clear before checkout',
                 ].map((item) => (
                   <div key={item} className="flex items-start gap-3 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
@@ -174,20 +209,14 @@ const Register: React.FC = () => {
                 ))}
               </div>
 
-              <div className="mt-8 grid gap-3 md:grid-cols-2">
-                {planCards.map((plan) => (
-                  <div key={plan.code} className={`rounded-2xl border p-4 ${form.plan === plan.code ? 'border-white/30 bg-white/16' : 'border-white/12 bg-white/8'}`}>
-                    <div className="text-xs uppercase tracking-wider text-white/70">{plan.name}</div>
-                    <div className="mt-2 text-lg font-semibold">{plan.subtitle}</div>
-                    <div className="mt-2 text-sm text-white/78">{plan.monthly}</div>
-                    <div className="mt-1 text-sm text-white/78">{plan.yearly}</div>
-                    <div className="mt-1 text-xs text-white/65">Includes 1 user</div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-auto pt-8 text-sm text-white/78">
-                Doctors should feel invited by the product, not slowed down by it.
+              <div className="mt-8 rounded-3xl border border-white/15 bg-white/10 p-5 backdrop-blur-sm">
+                <div className="text-sm font-semibold text-white">Selected setup</div>
+                <div className="mt-4 grid gap-2 text-sm text-white/82">
+                  <div className="flex justify-between"><span>Plan</span><span>{activePlan.name}</span></div>
+                  <div className="flex justify-between"><span>Billing</span><span>{billingCycle === 'yearly' ? 'Yearly' : 'Monthly'}</span></div>
+                  <div className="flex justify-between"><span>Users</span><span>{seatCount}</span></div>
+                  <div className="flex justify-between"><span>Total</span><span className="font-semibold text-white">EUR {pricingSummary.total.toFixed(2)}</span></div>
+                </div>
               </div>
             </div>
           </div>
@@ -201,7 +230,7 @@ const Register: React.FC = () => {
                 </div>
                 <h2 className="mt-4 text-3xl font-bold text-[#1F2937]">Start with the essentials</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  First create the workspace. After email verification, the customer goes directly to checkout and chooses a payment method inside the same page.
+                  Confirm the setup, add the owner details, then continue to verification and payment.
                 </p>
               </div>
 
@@ -251,15 +280,43 @@ const Register: React.FC = () => {
                             <div>
                               <div className="font-semibold text-[#1F2937]">{plan.name}</div>
                               <div className="mt-1 text-sm text-slate-500">{plan.subtitle}</div>
-                              <div className="mt-3 text-sm text-slate-700">{plan.monthly}</div>
-                              <div className="mt-1 text-sm text-slate-500">{plan.yearly}</div>
-                              <div className="mt-2 text-xs text-slate-500">{plan.extra}</div>
+                              <div className="mt-3 text-sm text-slate-700">{plan.monthlyLabel}</div>
+                              <div className="mt-1 text-sm text-slate-500">{plan.yearlyLabel}</div>
                             </div>
                             {selected ? <Check className="h-5 w-5 text-[#2C5F7C]" /> : null}
                           </div>
                         </button>
                       );
                     })}
+                  </div>
+                </section>
+
+                <section className="grid gap-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-5 md:grid-cols-[1fr_auto_auto] md:items-end">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">Billing cycle</div>
+                    <div className="mt-3 inline-flex rounded-full border border-slate-200 bg-white p-1">
+                      <button type="button" onClick={() => updateBillingCycle('monthly')} className={`rounded-full px-4 py-2 text-sm font-medium ${billingCycle === 'monthly' ? 'bg-[#2C5F7C] text-white' : 'text-slate-600'}`}>Monthly</button>
+                      <button type="button" onClick={() => updateBillingCycle('yearly')} className={`rounded-full px-4 py-2 text-sm font-medium ${billingCycle === 'yearly' ? 'bg-[#2C5F7C] text-white' : 'text-slate-600'}`}>Yearly</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">Users</div>
+                    <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2">
+                      <button type="button" onClick={() => updateSeatCount(seatCount - 1)} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700">
+                        <Minus className="h-4 w-4" />
+                      </button>
+                      <div className="min-w-10 text-center text-base font-semibold text-slate-900">{seatCount}</div>
+                      <button type="button" onClick={() => updateSeatCount(seatCount + 1)} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-700">
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-white px-4 py-4 text-sm text-slate-600">
+                    <div className="flex justify-between gap-6"><span>Included users</span><span className="font-medium text-slate-900">1</span></div>
+                    <div className="mt-2 flex justify-between gap-6"><span>Extra users</span><span className="font-medium text-slate-900">{pricingSummary.extraUsers}</span></div>
+                    <div className="mt-2 flex justify-between gap-6 border-t border-slate-100 pt-2"><span>Total</span><span className="font-semibold text-slate-900">EUR {pricingSummary.total.toFixed(2)}</span></div>
                   </div>
                 </section>
 
@@ -279,13 +336,6 @@ const Register: React.FC = () => {
                 <Button type="submit" disabled={loading} className="h-12 w-full rounded-xl bg-[#2C5F7C] text-white hover:bg-[#234e66]">
                   {loading ? 'Preparing workspace...' : 'Create workspace'}
                 </Button>
-
-                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-center text-sm text-slate-600">
-                  Already have an account?{' '}
-                  <Link to="/login" className="font-medium text-[#2C5F7C]">
-                    Sign in
-                  </Link>
-                </div>
               </form>
             </div>
           </div>
